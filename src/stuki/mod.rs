@@ -176,10 +176,10 @@ pub struct Stuki {
 
 #[cfg(feature = "gui")]
 /// ↑↑↓↓←→←→BA: builds the structograms from the specification.
-const KONAMI: [egui::Key; 10] = {
+const KONAMI: [egui::Key; 6] = {
     use egui::Key::*;
     [
-        ArrowUp, ArrowUp, ArrowDown, ArrowDown, ArrowLeft, ArrowRight, ArrowLeft, ArrowRight, B, A,
+        ArrowUp, ArrowDown, ArrowLeft, ArrowRight, B, A,
     ]
 };
 
