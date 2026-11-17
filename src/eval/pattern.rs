@@ -2,7 +2,7 @@
 
 use super::value::set;
 use super::{Env, Eval, R, Value};
-use crate::parser::Expr;
+use crate::parser::{BinOp, Expr, ExprKind};
 use std::cmp::Ordering;
 
 pub fn result_names(name: &str) -> &'static [&'static str] {
@@ -65,6 +65,16 @@ impl Eval<'_> {
             }
         };
         match name {
+            // SUM(i=b..e, f(i), start, op): start, then op(acc, f(i)) for every i
+            "SUM" if args.len() == 3 => {
+                let mut acc = self.eval(&args[1], env)?;
+                for i in range {
+                    at(env, i);
+                    let v = self.eval(&args[0], env)?;
+                    acc = self.combine(e, &args[2], &args[1], &args[0], acc, v, env)?;
+                }
+                Ok(acc)
+            }
             "SUM" => {
                 let mut acc = Value::Int(0);
                 for i in range {
@@ -190,6 +200,43 @@ impl Eval<'_> {
                 }
             }
             _ => unreachable!("unknown macro {name}"),
+        }
+    }
+}
+
+impl Eval<'_> {
+    /// `acc op v` for the general SUM: `op` is `+`, `*`, `and`, `or` or the name of a function.
+    fn combine(
+        &mut self,
+        e: &Expr,
+        op: &Expr,
+        start: &Expr,
+        f: &Expr,
+        acc: Value,
+        v: Value,
+        env: &mut Env,
+    ) -> R<Value> {
+        let ExprKind::Var(name) = &*op.kind else {
+            unreachable!("checked by the parser")
+        };
+        match name.as_str() {
+            "+" => self.arith(e, BinOp::Add, start, f, acc, v),
+            "*" => self.arith(e, BinOp::Mul, start, f, acc, v),
+            "and" | "or" => match (&acc, &v) {
+                (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(if name == "and" {
+                    *a && *b
+                } else {
+                    *a || *b
+                })),
+                _ => {
+                    let (bad, x) = if matches!(acc, Value::Bool(_)) { (f, &v) } else { (start, &acc) };
+                    Err(self.err(
+                        bad,
+                        format!("`{}` needs truth values, but `{}` is {}", name, self.t(bad), x.kind()),
+                    ))
+                }
+            },
+            _ => self.call_values(e, name, vec![acc, v], env),
         }
     }
 }

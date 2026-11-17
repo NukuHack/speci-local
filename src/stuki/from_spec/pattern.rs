@@ -96,6 +96,39 @@ impl Gen<'_> {
         let set = |x: &str, v: &str| stmt(format!("{x}:={v}"));
         let step = || set(var, &format!("{var}+1"));
         match name {
+            // SUM(i=b..e, f(i), start, op): s:=start, then s:=s op f(i) (or s:=op(s, f(i)))
+            "SUM" if args.len() == 3 => {
+                let start = self.value(&args[1], out);
+                out.push(set(&t[0], &start));
+                let mut body = vec![];
+                let fv = self.value(&args[0], &mut body);
+                let acc = &t[0];
+                let ExprKind::Var(op) = &*args[2].kind else {
+                    unreachable!("checked by the parser")
+                };
+                let step = match op.as_str() {
+                    "+" | "*" | "and" | "or" => {
+                        let sym = match op.as_str() {
+                            "and" => w.and,
+                            "or" => w.or,
+                            other => other,
+                        };
+                        let rhs = if op != "+" && needs_parens(&fv) {
+                            format!("({fv})")
+                        } else {
+                            fv
+                        };
+                        if sym.chars().all(char::is_alphabetic) {
+                            format!("{acc} {sym} {rhs}")
+                        } else {
+                            format!("{acc}{sym}{rhs}")
+                        }
+                    }
+                    func => format!("{func}({acc}, {fv})"),
+                };
+                body.push(set(acc, &step));
+                out.push(while_loop(range, body));
+            }
             "SUM" => {
                 out.push(set(&t[0], "0"));
                 let mut body = vec![];

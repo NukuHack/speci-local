@@ -112,7 +112,7 @@ speci-local accepts and rejects the same specifications as the online editor and
 | Logic | ∀/∃ and their word forms (`forall`/`minden`, `exists`/`létezik`, `in`/`eleme`), `true`/`igaz`, `false`/`hamis`, `->`, cases `{a, ha c; b egyébként}` |
 | Arithmetic | `\|`, `∤`, `<>`, `mod`/`%`, `div`, `n!`, `abs`, `sqrt`, `round`/`kerekít`, `length`/`hossz`, `from`/`tól`, `to`/`ig` |
 | Test data | YAML; an array or record may span several rows, and Enter in the test case editor indents like a JSON editor |
-| Patterns | `SUM`, `COUNT`, `MAX`, `MIN`, `EXISTS`, `FORALL`, `SELECT`, `SEARCH`, `COPY`, `MIS`, `CONDMAX`, `CONDMIN` and their other names (`SZUMMA`, `MEGSZÁMOL`, `ELDÖNT`, `MIND`, `KERES`, `KIVÁLASZT`, `MÁSOL`/`MAP`, `KIVÁLOGAT`/`FILTER`, `MAXHA`, `MINHA`, …) |
+| Patterns | `SUM`, `COUNT`, `MAX`, `MIN`, `EXISTS`, `FORALL`, `SELECT`, `SEARCH`, `COPY`, `MIS`, `CONDMAX`, `CONDMIN` and their other names (`SZUMMA`, `MEGSZÁMOL`, `ELDÖNT`, `MIND`, `KERES`, `KIVÁLASZT`, `MÁSOL`/`MAP`, `KIVÁLOGAT`/`FILTER`, `MAXHA`, `MINHA`, …). `SUM` also has the general form `SUM(i=1..n, f(i), start, op)` where `op` is `+`, `*`, `and`/`és`, `or`/`vagy` or the name of a two-parameter function |
 
 It also rejects what the online editor rejects: `→`, `∧`/`∨`, `ABS`, `element`, `SELECT(i≥…)`, several functions in one block, outputs in the precondition, declared variables missing from the postcondition, and test cases that leave out a value or repeat a constant.
 
@@ -225,6 +225,18 @@ On macOS, use ⌘ instead of Ctrl and ⌥ instead of Alt.
 | Ctrl+C | Stuki, outside a text field: copy the structogram as a picture |
 | Delete | Stuki: remove the selected element |
 | Ctrl+wheel | Stuki: zoom |
+
+## Terminal version
+
+`speci-tui` is the same editor for the terminal: specifications, test cases, step-by-step
+evaluation and structograms, driven entirely by vim-style keys (no mouse needed), made for
+150×40 and still usable in much smaller terminals. It builds without any windowing libraries:
+
+```sh
+cargo run --release -p speci-tui -- task.sp
+```
+
+See [`tui/README.md`](tui/README.md) for the keys.
 
 ## Phones and Android
 

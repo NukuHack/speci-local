@@ -167,8 +167,8 @@ pub const MACROS: &[(&str, usize, usize, &str)] = &[
     (
         "SUM",
         1,
-        2,
-        "SUM(i=b..e, f(i)) or SUM(i=b..e, f(i), condition)",
+        3,
+        "SUM(i=b..e, f(i)), SUM(i=b..e, f(i), condition) or SUM(i=b..e, f(i), start, op)",
     ),
     ("COUNT", 1, 1, "COUNT(i=b..e, condition)"),
     ("DARAB", 1, 1, "DARAB(i=b..e, condition)"),

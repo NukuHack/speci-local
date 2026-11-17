@@ -718,3 +718,41 @@ fn cases_in_a_function() {
     assert!(red(none, "x: -1\ns: 1").contains("None of the cases"));
     assert!(spec_err("Be: x∈Z\nKi: s∈Z\nEf: -\nUf: s={1, x>0}\n").contains("`ha`"));
 }
+
+/// SZUMMA(i=e..u, f(i), kezd, add): the general summation of the programming patterns slides.
+#[test]
+fn general_sum_with_start_value_and_operation() {
+    let t = |x: &str, out: &str, name: &str| format!("n: {}\nx: {x}\n{name}: {out}", x.matches(',').count() + 1);
+    // + with the zero element, and with another start value
+    let sum = "Be: n∈N, x∈Z[1..n]\nKi: s∈Z\nEf: -\nUf: s=SZUMMA(i=1..n, x[i], 0, +)";
+    green(sum, &[&t("[1, 2, 3]", "6", "s"), &t("[-5, 5]", "0", "s")]);
+    let from10 = "Be: n∈N, x∈Z[1..n]\nKi: s∈Z\nEf: -\nUf: s=SZUMMA(i=1..n, x[i], 10, +)";
+    green(from10, &[&t("[1, 2, 3]", "16", "s")]);
+    // * with 1 (product)
+    let prod = "Be: n∈N, x∈Z[1..n]\nKi: p∈Z\nEf: -\nUf: p=SZUMMA(i=1..n, x[i], 1, *)";
+    green(prod, &[&t("[2, 3, 4]", "24", "p"), &t("[2, 0, 4]", "0", "p")]);
+    // logical operators, in both languages
+    let and = "Be: n∈N, x∈Z[1..n]\nKi: mind∈L\nEf: -\nUf: mind=SZUMMA(i=1..n, x[i]>0, igaz, és)";
+    green(and, &[&t("[1, 2]", "true", "mind"), &t("[1, -1]", "false", "mind")]);
+    let or = "In: n∈N, x∈Z[1..n]\nOut: any∈L\nPre: -\nPost: any=SUM(i=1..n, x[i]>0, false, or)";
+    green(or, &[&t("[-1, 2]", "true", "any"), &t("[-1, -2]", "false", "any")]);
+    // a wrong test is red
+    let m = red(sum, &t("[1, 2, 3]", "7", "s"));
+    assert!(m.contains("the test case says 7, the specification gives 6"), "{m}");
+}
+
+#[test]
+fn general_sum_with_a_function_as_the_operation() {
+    // the order matters: add(acc, p) = 2*acc + p is not commutative
+    let spec = "Be: n∈N, x∈Z[1..n]\nKi: s∈Z\nFv: add:Z x Z->Z, add(a,b)=2*a+b\nEf: -\nUf: s=SZUMMA(i=1..n, x[i], 0, add)";
+    // ((0*2+1)*2+0)*2+1 = 5
+    green(spec, &["n: 3\nx: [1, 0, 1]\ns: 5"]);
+}
+
+#[test]
+fn general_sum_rejects_unknown_operations() {
+    let m = spec_err("Be: n∈N, x∈Z[1..n]\nKi: s∈Z\nEf: -\nUf: s=SZUMMA(i=1..n, x[i], 0, plus)");
+    assert!(m.contains("plus"), "{m}");
+    let m = spec_err("Be: n∈N, x∈Z[1..n]\nKi: s∈Z\nEf: -\nUf: s=SZUMMA(i=1..n, x[i], 0, 7)");
+    assert!(m.contains("operator"), "{m}");
+}

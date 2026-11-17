@@ -410,6 +410,19 @@ impl Parser<'_> {
         ))
     }
 
+    /// The operation of the general `SUM(i=b..e, f(i), start, op)`: an operator (`+`, `*`, `és`,
+    /// `vagy`) or the name of a function `add(s, p)`. It is kept as a `Var`: the operators under
+    /// their canonical names `+`, `*`, `and`, `or`.
+    fn operation(&mut self) -> PResult<Expr> {
+        let start = self.peek().start;
+        if let Tok::Sym(op @ ("+" | "*" | "and" | "or")) = self.peek().tok {
+            self.next();
+            return Ok(self.mk(start, ExprKind::Var(op.to_string())));
+        }
+        let name = self.ident("an operator (`+`, `*`, `és`, `vagy`) or the name of a function")?;
+        Ok(self.mk(start, ExprKind::Var(name)))
+    }
+
     fn macro_call(
         &mut self,
         start: usize,
@@ -446,7 +459,13 @@ impl Parser<'_> {
         };
         let mut args = Vec::new();
         while self.eat(",") {
-            args.push(self.expr()?);
+            // `SUM(i=b..e, f(i), start, op)`: the third argument names the operation
+            // (the second is then the start value, not a condition)
+            if name == "SUM" && args.len() == 2 {
+                args.push(self.operation()?);
+            } else {
+                args.push(self.expr()?);
+            }
         }
         if !self.eat(")") {
             let (l, c) = line_col(self.src, open.start);

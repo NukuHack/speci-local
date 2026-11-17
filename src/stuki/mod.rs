@@ -6,33 +6,53 @@
 //! match the web app. Projects are saved as `.st` files (the web app's own JSON), copied to the
 //! clipboard as one `STUKI1:` line, and pictures are copied or exported as PNG.
 
-mod canvas;
-mod checks;
-mod colors;
-mod export;
-mod files;
 pub mod format;
 pub mod from_spec;
-pub mod layout;
-mod menu;
 pub mod model;
-pub mod png;
 pub mod rich;
 pub mod run;
+
+// everything below draws with egui: the terminal UI (`tui/`) builds without it
+#[cfg(feature = "gui")]
+mod canvas;
+#[cfg(feature = "gui")]
+mod checks;
+#[cfg(feature = "gui")]
+mod colors;
+#[cfg(feature = "gui")]
+mod export;
+#[cfg(feature = "gui")]
+mod files;
+#[cfg(feature = "gui")]
+pub mod layout;
+#[cfg(feature = "gui")]
+mod menu;
+#[cfg(feature = "gui")]
+pub mod png;
+#[cfg(feature = "gui")]
 pub mod settings;
-#[cfg(test)]
+#[cfg(all(test, feature = "gui"))]
 mod tests;
 
+#[cfg(feature = "gui")]
 use eframe::egui::{self, Color32, Frame, Id, Margin, Rect};
+#[cfg(feature = "gui")]
 use layout::Del;
+#[cfg(feature = "gui")]
 use model::{Diagram, Node, Place, Program, Tag, TextKey};
+#[cfg(feature = "gui")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "gui")]
 use settings::{Look, Settings};
+#[cfg(feature = "gui")]
 use std::path::PathBuf;
 
+#[cfg(feature = "gui")]
 const GREEN: Color32 = Color32::from_rgb(0, 128, 0);
+#[cfg(feature = "gui")]
 const UNDO_LIMIT: usize = 200;
 
+#[cfg(feature = "gui")]
 /// Something that replaces the current structogram (asks first if it has unsaved changes).
 #[derive(Clone)]
 pub enum Pending {
@@ -44,6 +64,7 @@ pub enum Pending {
     FromSpec(Program, String),
 }
 
+#[cfg(feature = "gui")]
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Drag {
     /// A new element from the Elements menu.
@@ -52,6 +73,7 @@ enum Drag {
     Node(u64),
 }
 
+#[cfg(feature = "gui")]
 #[derive(Clone, Copy, PartialEq)]
 enum Target {
     At(u64, Place, Rect),
@@ -59,6 +81,7 @@ enum Target {
     Nothing,
 }
 
+#[cfg(feature = "gui")]
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Pal {
     Text,
@@ -67,6 +90,7 @@ enum Pal {
     Diagram,
 }
 
+#[cfg(feature = "gui")]
 #[derive(Clone, Copy)]
 enum Part {
     Header,
@@ -74,6 +98,7 @@ enum Part {
     Return,
 }
 
+#[cfg(feature = "gui")]
 enum Action {
     Del(Del),
     AddCase(u64, bool),
@@ -84,10 +109,12 @@ enum Action {
     CopyImage(u64),
 }
 
+#[cfg(feature = "gui")]
 fn text_id(key: TextKey) -> Id {
     Id::unique(("stuki-text", key))
 }
 
+#[cfg(feature = "gui")]
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct Stuki {
@@ -147,6 +174,7 @@ pub struct Stuki {
     keys: Vec<egui::Key>,
 }
 
+#[cfg(feature = "gui")]
 /// ↑↑↓↓←→←→BA: builds the structograms from the specification.
 const KONAMI: [egui::Key; 10] = {
     use egui::Key::*;
@@ -155,6 +183,7 @@ const KONAMI: [egui::Key; 10] = {
     ]
 };
 
+#[cfg(feature = "gui")]
 impl Default for Stuki {
     fn default() -> Self {
         let program = Program::default();
@@ -189,6 +218,7 @@ impl Default for Stuki {
     }
 }
 
+#[cfg(feature = "gui")]
 impl Stuki {
     pub fn dirty(&self) -> bool {
         !self.program.content_is(&self.saved)

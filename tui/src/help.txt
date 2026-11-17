@@ -1,0 +1,123 @@
+# Moving around @general
+Tab / Shift-Tab  ·  next / previous pane (when not typing)
+Ctrl-w h/l/w/W  ·  move between panes (like vim windows)
+Ctrl-w 1/2/3  ·  jump to a pane
+Ctrl-w o  ·  zoom the pane (again to restore)
+Ctrl-w t  ·  switch between Specification and Structogram
+F2 / gt / gT  ·  switch tool
+F1 / ?  ·  this help
+Esc  ·  back to a calm state
+
+# Leader keys: press Space, then ... @general
+Space w / W  ·  save / save as          (Ctrl-s saves too)
+Space o / n  ·  open / new
+Space q  ·  quit (asks about unsaved changes)
+Space y  ·  copy the whole project as one line
+Space p  ·  paste a project line (or paste with the terminal)
+Space T  ·  light / dark colors
+Space A  ·  ASCII mode on / off (:set ascii | :set utf8, or start with --ascii)
+Space 1 / 2  ·  Specification / Structogram
+Space z  ·  zoom
+
+# Command line (:) @general
+:w [file]  :wq  :q  :q!  :e file  :new  :saveas file
+:set light|dark  :set ascii|utf8  :zoom  :help  :spec  :stuki
+:copy  :paste  :N  ·  go to line N
+Up/Down  ·  command history
+
+# Specification → structogram @spec
+Space f  ·  build structograms from the current specification (works from both tools)
+:fromspec  ·  the same, from the command line
+The result opens in the Structogram tool and runs on your test cases right away.
+(If the specification has errors, fix them first; Space f tells you which line.)
+
+# Leader keys: Specification tool @spec
+Space r  ·  evaluate now (F5)
+Space a  ·  auto-evaluation on / off
+Space t / d  ·  new / delete test case
+Space s  ·  insert the variable names into the test case
+Space v  ·  Evaluation view: results / stepper / step list
+]t / [t  ·  next / previous test case
+]e / [e  ·  next / previous error line
+:run  :set auto|noauto  :tnew  :tdel  :tnext  :tprev  :t N  :scaffold  :view results|stepper|steps
+
+# Editing text (vim keys) @editing
+i a I A o O  ·  insert
+Esc  ·  back to normal mode
+h j k l w b e 0 $ gg G  ·  move
+f t F T ; ,  ·  find a character
+d c y  ·  with motions or text objects (dw, ci(, yap, ...)
+x X D C s S r p P J ~ .  ·  the usual
+u / Ctrl-r  ·  undo / redo
+v V  ·  visual mode
+* #  ·  search the word under the cursor
+/text  ·  search
+n N  ·  next / previous match
+Ctrl-d / Ctrl-u  ·  half page
+Ctrl-e / Ctrl-y  ·  scroll
+In insert mode:
+Ctrl-n / Ctrl-p  ·  complete word, header, MACRO or symbol (forall, exists, leq ...)
+Ctrl-k  ·  digraph: Ctrl-k (-  gives ∈,  FA ∀,  TE ∃,  != ≠,  =< ≤,  >= ≥
+Alt-1 .. Alt-6  ·  ∈ ∀ ∃ ≠ ≤ ≥ (some terminals keep Alt for themselves: use the next ones)
+\in \all \ex \ne \le \ge \not  ·  type the name, then a space, Tab or Esc: it turns into ∈ ∀ ∃ ≠ ≤ ≥ ¬ (\nd is ∤)
+in forall exists not <= >= !=  ·  you never need the symbols: the language accepts these words
+<=  >=  !=  ·  typed, they turn into ≤ ≥ ≠ by themselves
+Ctrl-w / Ctrl-u  ·  delete word / to line start
+
+# Evaluation pane @eval
+j / k  ·  scroll
+Ctrl-d / Ctrl-u  ·  half page
+gg / G  ·  top / bottom
+J / K  ·  next / previous test case
+Enter  ·  jump to the location of the problem
+v  ·  results → stepper → step list
+s S r  ·  stepper / list / results
+Stepper: h / l (or ← →) previous / next step, gg / G first / last
+Step list: j / k choose, Enter shows the step
+
+# Structogram: moving and editing @stuki
+j k  ·  next / previous element
+h  ·  parent
+l  ·  first inside
+w b  ·  sibling
+{ }  ·  previous / next structogram
+gg G  ·  first / last
+e i a Enter  ·  edit the text (Enter saves, Esc cancels)
+cc  ·  replace the text
+o / O  ·  add after / before, then: s statement, d decision, w while loop,
+          r repeat loop, c case (multi-way)
+dd  ·  delete (the element can be pasted)
+yy  ·  copy
+p / P  ·  paste after / before
+J / K  ·  move the element down / up
++c / +d  ·  add a case / the default case to a multi-way decision
+th tv tr  ·  show or hide the name, the variables, the return value
+n  ·  new structogram
+u / Ctrl-r  ·  undo / redo
+Ctrl-d / Ctrl-u / Ctrl-f / Ctrl-b  ·  page
+zh / zl  ·  scroll sideways
+While editing a text: Ctrl-k digraphs, Alt-1..6 symbols, <= >= != convert.
+
+# Structogram: leader keys and tests @stuki
+Space f  ·  build structograms from the specification (replaces the current ones)
+Space c  ·  copy the picture as text
+:export file.txt  ·  write it to a file
+]t / [t or T  ·  which test case the red mark shows
+:run  ·  run the tests again
+
+# Files @files
+Open and Save as show a file browser:
+j k gg G Ctrl-d Ctrl-u  ·  move
+l / Enter  ·  open folder or file
+h / Backspace  ·  up
+~  ·  home folder
+.  ·  hidden files
+a  ·  all files
+/  ·  filter
+Save as: i edits the file name, Enter saves (Enter again to overwrite).
+The terminal's paste (Ctrl+Shift+V, Cmd+V) inserts text where you are typing.
+Pasting a copied project line outside insert mode imports it.
+
+# About @about
+The same engine as the window app: files (.sp, .st) and copied project lines are
+interchangeable with it.  Close this help with q or Esc.

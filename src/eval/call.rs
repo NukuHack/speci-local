@@ -140,6 +140,17 @@ impl Eval<'_> {
         for a in args {
             vals.push(self.eval(a, env)?);
         }
+        self.call_values(e, name, vals, env)
+    }
+
+    /// A call of a function of the specification with the values of its arguments.
+    pub(super) fn call_values(
+        &mut self,
+        e: &Expr,
+        name: &str,
+        vals: Vec<Value>,
+        env: &mut Env,
+    ) -> R<Value> {
         if let Some(answer) = self.calls.and_then(|calls| calls(name, &vals, env)) {
             return answer;
         }

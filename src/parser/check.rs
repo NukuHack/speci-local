@@ -90,7 +90,27 @@ fn unknown_in<'s>(
                 unknown_in(spec, h, scope, out);
             }
             scope.push(var);
-            for a in args {
+            for (k, a) in args.iter().enumerate() {
+                // the operation of `SUM(i=b..e, f(i), start, op)` is an operator or a function
+                if let (2, ExprKind::Var(op)) = (k, &*a.kind) {
+                    let operator = matches!(op.as_str(), "+" | "*" | "and" | "or");
+                    if operator || spec.funcs.get(op).is_some_and(|f| f.params.len() == 2) {
+                        continue;
+                    }
+                    if spec.funcs.contains_key(op) {
+                        out.push((
+                            a.start,
+                            Unknown::Arity {
+                                name: op,
+                                want: 2,
+                                got: spec.funcs[op].params.len(),
+                            },
+                        ));
+                    } else {
+                        out.push((a.start, Unknown::Func(op)));
+                    }
+                    continue;
+                }
                 unknown_in(spec, a, scope, out);
             }
             scope.pop();

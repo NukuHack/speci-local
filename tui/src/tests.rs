@@ -1,0 +1,560 @@
+//! End-to-end tests: simulated keys, rendered into an in-memory terminal.
+
+use crate::app::{App, Tool};
+use crate::ui;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+
+pub fn keys(app: &mut App, s: &str) {
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        let ev = if c == '<' {
+            let mut name = String::new();
+            for d in it.by_ref() {
+                if d == '>' {
+                    break;
+                }
+                name.push(d);
+            }
+            match name.as_str() {
+                "Esc" => KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                "CR" => KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                "Tab" => KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+                "S-Tab" => KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+                "BS" => KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+                "lt" => KeyEvent::new(KeyCode::Char('<'), KeyModifiers::NONE),
+                "Space" => KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+                "F5" => KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE),
+                n if n.starts_with("C-") => KeyEvent::new(
+                    KeyCode::Char(n.chars().nth(2).unwrap()),
+                    KeyModifiers::CONTROL,
+                ),
+                n if n.starts_with("A-") => {
+                    KeyEvent::new(KeyCode::Char(n.chars().nth(2).unwrap()), KeyModifiers::ALT)
+                }
+                n => panic!("unknown key <{n}>"),
+            }
+        } else {
+            KeyEvent::new(
+                KeyCode::Char(c),
+                if c.is_uppercase() {
+                    KeyModifiers::SHIFT
+                } else {
+                    KeyModifiers::NONE
+                },
+            )
+        };
+        app.on_key(ev);
+    }
+}
+
+/// Wait for the background evaluation to finish.
+pub fn settle(app: &mut App) {
+    for _ in 0..400 {
+        app.tick();
+        if !app.wants_tick() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("evaluation did not finish");
+}
+
+pub fn render(app: &mut App, w: u16, h: u16) -> String {
+    app.tick();
+    let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+    t.draw(|f| ui::draw(f, app)).unwrap();
+    let buf = t.backend().buffer().clone();
+    let mut out = String::new();
+    for y in 0..h {
+        let mut line = String::new();
+        for x in 0..w {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+pub fn fresh() -> App {
+    let mut a = App::new(true);
+    settle(&mut a);
+    a
+}
+
+#[test]
+fn shows_three_panes_at_150x40() {
+    let mut a = fresh();
+    let s = render(&mut a, 150, 40);
+    println!("{s}");
+    assert_eq!(s.lines().count(), 40);
+    for w in [
+        "1 Specification",
+        "2 Test data",
+        "3 Evaluation",
+        "Test case 1  passed",
+        "DARAB",
+        "NORMAL",
+    ] {
+        assert!(s.contains(w), "missing {w}");
+    }
+}
+
+#[test]
+fn every_size_renders_without_panicking() {
+    for (w, h) in [
+        (150, 40),
+        (120, 30),
+        (100, 24),
+        (80, 24),
+        (60, 20),
+        (40, 12),
+        (30, 8),
+        (21, 6),
+    ] {
+        for tool in [Tool::Spec, Tool::Stuki] {
+            let mut a = fresh();
+            a.tool = tool;
+            let _ = render(&mut a, w, h);
+            keys(&mut a, "<C-w>l");
+            let _ = render(&mut a, w, h);
+            keys(&mut a, "<C-w>l?");
+            let _ = render(&mut a, w, h);
+        }
+    }
+}
+
+#[test]
+fn panes_are_reachable_with_keys_only() {
+    let mut a = fresh();
+    keys(&mut a, "<Tab>");
+    assert_eq!(a.focus, crate::app::Pane::Data);
+    keys(&mut a, "<Tab>");
+    assert_eq!(a.focus, crate::app::Pane::Eval);
+    keys(&mut a, "<S-Tab><S-Tab>");
+    assert_eq!(a.focus, crate::app::Pane::Spec);
+    keys(&mut a, "<C-w>j");
+    keys(&mut a, "<C-w>3");
+    assert_eq!(a.focus, crate::app::Pane::Eval);
+    keys(&mut a, "<C-w>o");
+    assert!(a.zoom);
+    let s = render(&mut a, 150, 40);
+    assert!(!s.contains("1 Specification") || s.contains("[3 Eval]"));
+}
+
+#[test]
+fn editing_the_spec_reevaluates_and_marks_errors() {
+    let mut a = fresh();
+    // break the postcondition: add a stray operator at the end of the last line
+    keys(&mut a, "G$a +<Esc>");
+    settle(&mut a);
+    let s = render(&mut a, 150, 40);
+    println!("{s}");
+    assert!(
+        a.spec_ed.errors.len() + a.spec_diags.len() > 0
+            || a.results[0].as_ref().is_some_and(|o| !o.pass)
+    );
+    assert!(s.contains('✘'));
+    // undo restores it
+    keys(&mut a, "u");
+    settle(&mut a);
+    assert!(a.results[0].as_ref().unwrap().pass);
+}
+
+#[test]
+fn tests_can_be_added_deleted_and_stepped_through() {
+    let mut a = fresh();
+    keys(&mut a, "<Space>t");
+    assert_eq!(a.doc.tests.len(), 2);
+    keys(&mut a, "<Space>s");
+    assert!(a.doc.tests[1].contains("szamok"), "{:?}", a.doc.tests[1]);
+    keys(&mut a, "<Esc>[t");
+    assert_eq!(a.current, 0);
+    keys(&mut a, "]t");
+    assert_eq!(a.current, 1);
+    keys(&mut a, "<Space>d");
+    assert_eq!(a.doc.tests.len(), 1);
+    // stepper
+    settle(&mut a);
+    keys(&mut a, "<C-w>3sl");
+    assert_eq!(a.view, crate::app::View::Stepper);
+    assert_eq!(a.step, 1);
+    let s = render(&mut a, 150, 40);
+    println!("{s}");
+    assert!(s.contains("Step 2 of"));
+    keys(&mut a, "S");
+    let s = render(&mut a, 150, 40);
+    assert!(s.contains("DARAB") || s.contains("Uf"));
+}
+
+#[test]
+fn commands_work() {
+    let mut a = fresh();
+    keys(&mut a, ":set light<CR>");
+    assert!(!a.theme.dark);
+    keys(&mut a, ":tnew<CR>");
+    assert_eq!(a.doc.tests.len(), 2);
+    keys(&mut a, "<Esc>:t 1<CR>");
+    assert_eq!(a.current, 0);
+    keys(&mut a, "<C-w>1:3<CR>");
+    assert_eq!(a.spec_ed.line_col().0, 3);
+}
+
+#[test]
+fn save_and_open_roundtrip() {
+    let dir = std::env::temp_dir().join(format!("speci-tui-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("x.sp");
+    let mut a = fresh();
+    keys(&mut a, &format!(":w {}<CR>", f.display()));
+    assert!(f.exists());
+    assert!(!a.dirty());
+    keys(&mut a, "GoUf: x<Esc>");
+    assert!(a.dirty());
+    // :q asks first, d discards
+    keys(&mut a, ":q<CR>");
+    assert!(!a.quit);
+    let s = render(&mut a, 100, 30);
+    assert!(s.contains("Unsaved changes"));
+    keys(&mut a, "d");
+    assert!(a.quit);
+    let mut b = App::new(true);
+    b.load(&f);
+    assert_eq!(b.doc.spec, fresh().doc.spec);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn structogram_from_spec_and_editing() {
+    let mut a = fresh();
+    keys(&mut a, "<Space>f");
+    assert_eq!(a.tool, Tool::Stuki);
+    settle(&mut a);
+    for _ in 0..50 {
+        a.tick();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        if a.stuki.checks.is_some() {
+            break;
+        }
+    }
+    let s = render(&mut a, 150, 40);
+    println!("{s}");
+    assert!(s.contains("┌") && s.contains("Test case 1"));
+    // navigate and edit with the keyboard only
+    keys(&mut a, "gg");
+    keys(&mut a, "jj");
+    let before = a.stuki.program.content();
+    keys(&mut a, "cc");
+    keys(&mut a, "x:=1<lt>=2<CR>");
+    assert_ne!(a.stuki.program.content(), before);
+    let s = render(&mut a, 150, 40);
+    assert!(s.contains("x:=1≤2"), "{s}");
+    keys(&mut a, "u");
+    assert_eq!(a.stuki.program.content(), before);
+    keys(&mut a, "<C-r>");
+    assert_ne!(a.stuki.program.content(), before);
+    // add a loop after the cursor, then delete it again
+    let n = a.stuki.program.content();
+    keys(&mut a, "ow");
+    assert_ne!(a.stuki.program.content(), n);
+    keys(&mut a, "dd");
+    assert_eq!(a.stuki.program.content(), n);
+}
+
+#[test]
+fn help_opens_and_scrolls() {
+    let mut a = fresh();
+    keys(&mut a, "?");
+    let s = render(&mut a, 150, 40);
+    assert!(s.contains("Leader key"));
+    keys(&mut a, "jjjjG");
+    let s = render(&mut a, 150, 40);
+    assert!(s.contains("About") || s.contains("Close this help"));
+    keys(&mut a, "q");
+    assert!(matches!(a.overlay, crate::app::Overlay::None));
+}
+
+#[test]
+fn dot_repeat_visual_and_search_work_in_the_editors() {
+    let mut a = fresh();
+    keys(&mut a, "<C-w>2");
+    keys(&mut a, "ggOa<Esc>j.");
+    assert!(a.doc.tests[0].starts_with("a\n"), "{:?}", a.doc.tests[0]);
+    keys(&mut a, "ggvjd");
+    assert!(!a.doc.tests[0].starts_with("a\na"));
+    keys(&mut a, "u");
+    keys(&mut a, "gg/szamok<CR>");
+    let (line, _) = a.data().line_col();
+    assert!(
+        a.doc.tests[0]
+            .lines()
+            .nth(line - 1)
+            .unwrap()
+            .contains("szamok")
+    );
+}
+
+#[test]
+fn failing_test_shows_the_problem_and_enter_jumps_to_it() {
+    let mut a = fresh();
+    keys(&mut a, "<C-w>2");
+    keys(&mut a, "/db: 3<CR>");
+    keys(&mut a, "$r9<Esc>");
+    settle(&mut a);
+    let s = render(&mut a, 150, 40);
+    println!("{s}");
+    assert!(s.contains("✘ Test case 1  failed"));
+    keys(&mut a, "<C-w>3");
+    keys(&mut a, "<CR>");
+    assert!(
+        a.focus != crate::app::Pane::Eval,
+        "should jump to the location"
+    );
+}
+
+#[test]
+fn paste_of_a_project_line_imports_it() {
+    let mut a = fresh();
+    let line = speci_local::file::to_compact(&speci_local::file::Doc {
+        title: "T".into(),
+        spec: "Be:\nx∈Z\n\nKi:\n\nEf:\n-\n\nUf:\n".into(),
+        tests: vec!["x: 1\n".into()],
+    });
+    a.on_paste(&line);
+    assert_eq!(a.doc.title, "T");
+    assert!(a.doc.spec.contains("x∈Z"));
+}
+
+fn help_order(app: &App) -> Vec<String> {
+    ui::help_lines(&app.theme, app.tool, app.focus)
+        .iter()
+        .map(ToString::to_string)
+        .filter(|l| {
+            [
+                "Moving around",
+                "Specification tool",
+                "Editing text",
+                "Evaluation pane",
+                "Structogram: moving",
+                "Structogram: leader",
+                "Files",
+            ]
+            .iter()
+            .any(|h| l.starts_with(h))
+        })
+        .collect()
+}
+
+fn position(order: &[String], head: &str) -> usize {
+    order.iter().position(|l| l.starts_with(head)).unwrap()
+}
+
+#[test]
+fn help_puts_the_current_context_first() {
+    let mut a = fresh();
+    // typing in the specification: general, then editing, before the structogram sections
+    let o = help_order(&a);
+    assert!(position(&o, "Moving around") < position(&o, "Editing text"));
+    assert!(position(&o, "Editing text") < position(&o, "Evaluation pane"));
+    assert!(position(&o, "Evaluation pane") < position(&o, "Structogram: moving"));
+    // in the evaluation pane that one comes before the text editing
+    keys(&mut a, "<C-w>3");
+    let o = help_order(&a);
+    assert!(position(&o, "Evaluation pane") < position(&o, "Editing text"));
+    // in the structogram tool its own sections lead and the editor ones sink
+    keys(&mut a, "<Space>2");
+    let o = help_order(&a);
+    assert!(position(&o, "Moving around") < position(&o, "Structogram: moving"));
+    assert!(position(&o, "Structogram: moving") < position(&o, "Editing text"));
+    assert!(position(&o, "Structogram: leader") < position(&o, "Files"));
+    let s = ui::help_lines(&a.theme, a.tool, a.focus)
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(s.contains("Structogram: moving and editing  ← you are here"));
+}
+
+#[test]
+fn leader_hint_depends_on_the_tool() {
+    let mut a = fresh();
+    keys(&mut a, "<Space>");
+    assert!(a.status.contains("f →structogram") && a.status.contains("scaffold"));
+    keys(&mut a, "<Esc><Space>2<Space>");
+    assert!(a.status.contains("build from spec") && !a.status.contains("scaffold"));
+}
+
+#[test]
+#[ignore = "prints the help for a visual check"]
+fn show_help_screens() {
+    let mut a = fresh();
+    keys(&mut a, "?");
+    let _ = std::fs::write("/tmp/help_spec.txt", render(&mut a, 150, 40));
+    keys(&mut a, "q<Space>2?");
+    let _ = std::fs::write("/tmp/help_stuki.txt", render(&mut a, 150, 40));
+}
+
+fn assert_ascii(screen: &str, what: &str) {
+    if let Some((i, c)) = screen.char_indices().find(|(_, c)| !c.is_ascii()) {
+        let line = screen[..i].lines().count();
+        panic!("{what}: non-ASCII {c:?} on line {line}\n{screen}");
+    }
+}
+
+#[test]
+fn ascii_mode_draws_only_ascii_in_every_view() {
+    let mut a = fresh();
+    a.set_ascii(true);
+    let s = render(&mut a, 150, 40);
+    assert_ascii(&s, "spec tool");
+    // symbols show as the words the language accepts, accents are folded
+    assert!(s.contains("n in N,"), "{s}");
+    assert!(s.contains("Paratlan szamok"));
+    assert!(s.contains("[ok] Test case 1  passed"));
+    assert!(s.contains('#'), "focused border is heavier in ASCII");
+    // failing test, stepper, step list
+    keys(&mut a, "<C-w>2/db: 3<CR>$r9<Esc>");
+    settle(&mut a);
+    assert_ascii(&render(&mut a, 150, 40), "failing test");
+    keys(&mut a, "<C-w>3");
+    assert!(render(&mut a, 150, 40).contains("[FAIL]"));
+    for view in ["s", "S", "r"] {
+        keys(&mut a, view);
+        assert_ascii(&render(&mut a, 150, 40), "evaluation view");
+    }
+    // overlays
+    for open in ["?", "<Esc>:<CR>", "<Space>o", "<Space>w"] {
+        keys(&mut a, open);
+        assert_ascii(&render(&mut a, 150, 40), open);
+        keys(&mut a, "<Esc><Esc>");
+        keys(&mut a, "q");
+        a.overlay = crate::app::Overlay::None;
+    }
+    // narrow layouts too
+    for (w, h) in [(100, 30), (60, 20)] {
+        assert_ascii(&render(&mut a, w, h), "narrow");
+    }
+}
+
+#[test]
+fn ascii_structogram_is_plain_text_art() {
+    let mut a = fresh();
+    a.set_ascii(true);
+    keys(&mut a, "<Space>f");
+    settle(&mut a);
+    for _ in 0..50 {
+        a.tick();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        if a.stuki.checks.is_some() {
+            break;
+        }
+    }
+    let s = render(&mut a, 150, 40);
+    println!("{s}");
+    assert_ascii(&s, "structogram");
+    assert!(s.contains('+') && s.contains('|') && s.contains('-'));
+    // editing text with symbols: the edit line spells them out
+    keys(&mut a, "ggjjcc");
+    keys(&mut a, "i<lt>=3");
+    let s = render(&mut a, 150, 40);
+    assert_ascii(&s, "edit line");
+    assert!(s.contains("i<=3"));
+    keys(&mut a, "<CR>");
+    // the exported picture is ASCII as well
+    let words = crate::stuki::Stuki::layout_words(&a.doc.spec);
+    let picture = crate::nslayout::to_text(&crate::nslayout::layout(
+        &a.stuki.program,
+        100,
+        &words,
+        None,
+    ));
+    assert_ascii(&picture, "picture");
+}
+
+#[test]
+fn ascii_cursor_stays_on_the_character_it_belongs_to() {
+    let mut a = fresh();
+    a.set_ascii(true);
+    keys(&mut a, "ggdGi∈x<Esc>");
+    // `∈` shows as " in " (4 columns), so the x is at column 4 after the line number gutter
+    let _ = render(&mut a, 150, 40);
+    let gutter = 4; // two digits + two spaces
+    let x0 = a.spec_ed.cursor_xy.unwrap().0;
+    keys(&mut a, "0");
+    let _ = render(&mut a, 150, 40);
+    let left = a.spec_ed.cursor_xy.unwrap().0;
+    assert_eq!(left, 1 + gutter, "column 0 of the spec pane");
+    assert_eq!(x0 - left, 4, "after the 4-column symbol");
+}
+
+#[test]
+fn backslash_names_type_symbols_without_alt() {
+    let mut a = fresh();
+    keys(&mut a, "ggdGi\\all x\\in y \\le z \\ne w<Esc>");
+    assert_eq!(a.doc.spec, "∀ x∈ y ≤ z ≠ w");
+    // converted on Tab too, and on Esc at the end of the line
+    keys(&mut a, "ggdGi\\ex<Tab>y \\not<Esc>");
+    assert_eq!(a.doc.spec, "∃y ¬");
+    // unknown names are left alone
+    keys(&mut a, "ggdGi\\foo bar<Esc>");
+    assert_eq!(a.doc.spec, "\\foo bar");
+    // the structogram text line has them too
+    keys(&mut a, "<Space>2");
+    keys(&mut a, "ggjjcc");
+    keys(&mut a, "i\\le 3<CR>");
+    assert!(a.stuki.program.content().contains('≤'));
+}
+
+#[test]
+fn partial_redraws_stay_correct_in_ascii_mode() {
+    // one long-lived terminal: only changed cells are sent, like on a real screen
+    let mut a = fresh();
+    a.set_ascii(true);
+    let mut live = Terminal::new(TestBackend::new(150, 40)).unwrap();
+    let dump = |t: &Terminal<TestBackend>| {
+        let buf = t.backend().buffer();
+        (0..40)
+            .map(|y| {
+                (0..150)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for step in [
+        "", "j", "jjj", "G", "<C-d>", "gg", "<Tab>", "<Tab>", "<Space>f", "j", "j", "o", "<Esc>",
+        "<Space>1", "?", "jjj", "q",
+    ] {
+        keys(&mut a, step);
+        a.tick();
+        live.draw(|f| ui::draw(f, &mut a)).unwrap();
+        let mut fresh_term = Terminal::new(TestBackend::new(150, 40)).unwrap();
+        fresh_term.draw(|f| ui::draw(f, &mut a)).unwrap();
+        let (l, f) = (dump(&live), dump(&fresh_term));
+        assert_ascii(&l, step);
+        assert_eq!(
+            l, f,
+            "after {step:?} the incremental screen differs from a full redraw"
+        );
+    }
+}
+
+#[test]
+#[ignore = "prints ASCII screens for a visual check"]
+fn show_ascii_screens() {
+    let mut a = fresh();
+    a.set_ascii(true);
+    keys(&mut a, "<C-w>2/db: 3<CR>$r9<Esc>");
+    settle(&mut a);
+    let _ = std::fs::write("/tmp/ascii_spec.txt", render(&mut a, 150, 40));
+    keys(&mut a, "<C-w>1<Space>f");
+    settle(&mut a);
+    for _ in 0..50 {
+        a.tick();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let _ = std::fs::write("/tmp/ascii_stuki.txt", render(&mut a, 150, 40));
+}

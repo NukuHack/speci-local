@@ -333,3 +333,61 @@ fn a_pattern_that_cannot_become_steps_leaves_its_output_unset() {
     assert_eq!(g.unset, ["s"]);
     assert_eq!(outline(&g.program), "== T\nBe: n, m, x, t\nKi: s\n");
 }
+
+#[test]
+fn general_sum_with_an_operator() {
+    let spec = |ki: &str, uf: &str| {
+        outline_of(&format!(
+            "Be:\nn∈N,\nt∈Z[1..n]\nKi:\n{ki}\nEf:\n-\nUf:\n{uf}\n"
+        ))
+    };
+    assert_eq!(
+        spec("s∈Z", "s=SZUMMA(i=1..n, t[i], 0, +)"),
+        "== T\nvars i:Egész\nBe: n, t\ns:=0\n[while i=1..n]\n  s:=s+t[i]\nKi: s\n"
+    );
+    assert_eq!(
+        spec("p∈Z", "p=SZUMMA(i=1..n, t[i], 1, *)"),
+        "== T\nvars i:Egész\nBe: n, t\np:=1\n[while i=1..n]\n  p:=p*t[i]\nKi: p\n"
+    );
+    // a condition as the value needs brackets next to a word operator; the word follows the language
+    assert_eq!(
+        spec("s∈L", "s=SZUMMA(i=1..n, t[i]>0, igaz, és)"),
+        "== T\nvars i:Egész\nBe: n, t\ns:=igaz\n[while i=1..n]\n  s:=s és (t[i]>0)\nKi: s\n"
+    );
+    assert_eq!(
+        outline_of(
+            "In: n∈N, t∈Z[1..n]\nOut: s∈L\nPre: -\nPost: s=SUM(i=1..n, t[i]>0, false, or)"
+        ),
+        "== T\nvars i:Integer\nIn: n, t\ns:=false\n[while i=1..n]\n  s:=s or (t[i]>0)\nOut: s\n"
+    );
+    // the start value is not 0 and not a condition
+    assert_eq!(
+        spec("s∈Z", "s=SZUMMA(i=1..n, t[i], 10, +)"),
+        "== T\nvars i:Egész\nBe: n, t\ns:=10\n[while i=1..n]\n  s:=s+t[i]\nKi: s\n"
+    );
+}
+
+#[test]
+fn general_sum_with_a_function() {
+    let out = outline_of(
+        "Be:\nn∈N,\nt∈Z[1..n]\nKi:\ns∈Z\nFv:\nadd:Z x Z->Z,\nadd(a,b)=2*a+b\nEf:\n-\nUf:\ns=SZUMMA(i=1..n, t[i], 0, add)\n",
+    );
+    assert!(
+        out.contains("s:=0\n[while i=1..n]\n  s:=add(s, t[i])\nKi: s"),
+        "{out}"
+    );
+    // the function gets its own structogram, like every Fv
+    assert!(out.contains("== add"), "{out}");
+}
+
+#[test]
+fn general_sum_needs_an_operation() {
+    let err = |uf: &str| {
+        let src = format!("Be:\nn∈N,\nt∈Z[1..n]\nKi:\ns∈Z\nFv:\nf:Z->Z,\nf(a)=a\nEf:\n-\nUf:\n{uf}\n");
+        parse(&src).err().map(|e| e[0].title.clone()).unwrap_or_default()
+    };
+    assert!(err("s=SZUMMA(i=1..n, t[i], 0, 5)").contains("operator"));
+    assert!(err("s=SZUMMA(i=1..n, t[i], 0, nincs)").contains("nincs"));
+    // a function with one parameter can't combine two values
+    assert!(err("s=SZUMMA(i=1..n, t[i], 0, f)").contains("f"));
+}

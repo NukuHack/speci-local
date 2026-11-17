@@ -1,0 +1,19 @@
+# The terminal UI: the same specification and structogram editors as the window app, drawn in
+# the terminal and driven completely from the keyboard (vim-style keys).
+# Run it with `cargo run --release -p speci-tui`.
+[package]
+name = "speci-tui"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "speci-tui"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = "0.29.0"
+ratatui = "0.30.2"
+# the engine only: no windowing libraries
+speci-local = { path = "..", default-features = false }
+unicode-width = "0.2.3"

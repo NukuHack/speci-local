@@ -1,5 +1,5 @@
 [workspace]
-members = ["android"] # the root package is a member too
+members = ["android", "tui"] # the root package is a member too
 # `cargo build` / `cargo test` at the top level only build the desktop app
 default-members = ["."]
 
@@ -22,15 +22,35 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["gui"]
+# The egui app (desktop and Android). Without it the crate is only the engine: parser,
+# evaluator, runner, file formats and the structogram model, which the terminal UI in `tui/`
+# builds on (`cargo build -p speci-tui` needs none of the windowing libraries).
+gui = [
+    "dep:eframe",
+    "dep:png",
+    "dep:winit",
+    "dep:arboard",
+    "dep:rfd",
+    "dep:jni",
+    "dep:ndk-context",
+]
+
+[[bin]]
+name = "speci-local"
+path = "src/main.rs"
+required-features = ["gui"]
+
 [dependencies]
 # every system picks its renderer (and Android can't have the `accesskit` feature) below
-eframe = { workspace = true, features = [
+eframe = { workspace = true, optional = true, features = [
     "clipboard",
     "links",
     "persistence",
 ] }
 miniz_oxide = "0.8"
-png = "0.18"
+png = { version = "0.18", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
 # without `encoding`: test data is always UTF-8 here
@@ -38,39 +58,39 @@ yaml-rust2 = { version = "0.13.0", default-features = false }
 
 # Windows, Linux, macOS: native file dialogs and clipboard
 [target.'cfg(not(target_os = "android"))'.dependencies]
-arboard = "3"
-rfd = "0.17.2"
+arboard = { version = "3", optional = true }
+rfd = { version = "0.17.2", optional = true }
 
 # Linux: the OpenGL renderer, which is about 9 MB smaller in the executable than wgpu and
 # needs less memory. winit's own defaults bring the window frame for GNOME on Wayland.
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { workspace = true, features = [
+eframe = { workspace = true, optional = true, features = [
     "accesskit",
     "glow",
     "system_fonts",
     "wayland",
     "x11",
 ] }
-winit = { workspace = true, features = ["default"] }
+winit = { workspace = true, optional = true, features = ["default"] }
 
 # Windows, macOS: eframe's default features (the wgpu renderer) but for its default fonts:
 # the app has its own, and other scripts and emoji come from the system's fonts
 [target.'cfg(not(any(target_os = "linux", target_os = "android")))'.dependencies]
-eframe = { workspace = true, features = [
+eframe = { workspace = true, optional = true, features = [
     "accesskit",
     "system_fonts",
     "wayland",
     "wgpu",
     "x11",
 ] }
-winit = { workspace = true, features = ["default"] }
+winit = { workspace = true, optional = true, features = ["default"] }
 
 # Android: wgpu, and the system clipboard through JNI
 [target.'cfg(target_os = "android")'.dependencies]
-eframe = { workspace = true, features = ["default_fonts", "wgpu"] }
-jni = "0.22"
-ndk-context = "0.1"
-winit = { workspace = true, features = ["android-native-activity"] }
+eframe = { workspace = true, optional = true, features = ["default_fonts", "wgpu"] }
+jni = { version = "0.22", optional = true }
+ndk-context = { version = "0.1", optional = true }
+winit = { workspace = true, optional = true, features = ["android-native-activity"] }
 
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["eframe"] }

@@ -112,7 +112,7 @@ A speci-local ugyanazokat a specifikációkat fogadja el és utasítja el, mint 
 | Logika | ∀/∃ és szavas alakjaik (`forall`/`minden`, `exists`/`létezik`, `in`/`eleme`), `true`/`igaz`, `false`/`hamis`, `->`, esetszétválasztás `{a, ha c; b egyébként}` |
 | Aritmetika | `\|`, `∤`, `<>`, `mod`/`%`, `div`, `n!`, `abs`, `sqrt`, `round`/`kerekít`, `length`/`hossz`, `from`/`tól`, `to`/`ig` |
 | Tesztadatok | YAML; egy tömb vagy rekord több sorba is írható, és a tesztesetszerkesztőben az Enter úgy húz be, mint egy JSON-szerkesztő |
-| Tételek | `SUM`, `COUNT`, `MAX`, `MIN`, `EXISTS`, `FORALL`, `SELECT`, `SEARCH`, `COPY`, `MIS`, `CONDMAX`, `CONDMIN` és a többi nevük (`SZUMMA`, `MEGSZÁMOL`, `ELDÖNT`, `MIND`, `KERES`, `KIVÁLASZT`, `MÁSOL`/`MAP`, `KIVÁLOGAT`/`FILTER`, `MAXHA`, `MINHA`, …) |
+| Tételek | `SUM`, `COUNT`, `MAX`, `MIN`, `EXISTS`, `FORALL`, `SELECT`, `SEARCH`, `COPY`, `MIS`, `CONDMAX`, `CONDMIN` és a többi nevük (`SZUMMA`, `MEGSZÁMOL`, `ELDÖNT`, `MIND`, `KERES`, `KIVÁLASZT`, `MÁSOL`/`MAP`, `KIVÁLOGAT`/`FILTER`, `MAXHA`, `MINHA`, …). A `SZUMMA` általános alakja is használható: `SZUMMA(i=1..n, f(i), kezd, művelet)`, ahol a művelet `+`, `*`, `és`, `vagy` vagy egy kétparaméteres függvény neve |
 
 Azt is elutasítja, amit az online szerkesztő elutasít: `→`, `∧`/`∨`, `ABS`, `element`, `SELECT(i≥…)`, több függvény egy blokkban, kimenetek az előfeltételben, az utófeltételből hiányzó deklarált változók, és az olyan tesztesetek, amelyekből kimarad egy érték, vagy amelyek újra megadnak egy konstanst.
 
