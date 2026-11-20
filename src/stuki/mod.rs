@@ -166,22 +166,10 @@ pub struct Stuki {
     /// What to do once the Android "Save as" list has saved the file.
     #[serde(skip)]
     pub after_save: Option<Pending>,
-    /// The Konami code was typed: the app builds the structograms from its specification.
+    /// "From spec" was clicked: the app builds the structograms from its specification.
     #[serde(skip)]
     pub wants_spec: bool,
-    /// The last keys pressed, to spot the Konami code.
-    #[serde(skip)]
-    keys: Vec<egui::Key>,
 }
-
-#[cfg(feature = "gui")]
-/// ↑↑↓↓←→←→BA: builds the structograms from the specification.
-const KONAMI: [egui::Key; 6] = {
-    use egui::Key::*;
-    [
-        ArrowUp, ArrowDown, ArrowLeft, ArrowRight, B, A,
-    ]
-};
 
 #[cfg(feature = "gui")]
 impl Default for Stuki {
@@ -213,7 +201,6 @@ impl Default for Stuki {
             file_request: None,
             after_save: None,
             wants_spec: false,
-            keys: vec![],
         }
     }
 }
@@ -322,30 +309,6 @@ impl Stuki {
         }
         if ctx.text_edit_focused() {
             return; // the text field has its own undo
-        }
-        let pressed: Vec<egui::Key> = ctx.input(|i| {
-            i.events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::Key {
-                        key,
-                        pressed: true,
-                        repeat: false,
-                        ..
-                    } => Some(*key),
-                    _ => None,
-                })
-                .collect()
-        });
-        for k in pressed {
-            if self.keys.len() == KONAMI.len() {
-                self.keys.remove(0);
-            }
-            self.keys.push(k);
-            if self.keys == KONAMI {
-                self.wants_spec = true;
-                self.keys.clear();
-            }
         }
         // Ctrl+C (arrives as a copy event) outside the texts: the picture
         if ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy))) {

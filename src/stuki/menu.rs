@@ -6,7 +6,7 @@ use super::rich::Rich;
 use super::settings::{Look, Settings, ZOOM_RANGE};
 use super::{Drag, Stuki};
 use crate::platform;
-use crate::ui::{I_BRUSH, I_DOWNLOAD, I_HELP, I_IMAGE, I_REDO, I_RUN, I_SLIDERS, I_TEXT, I_UNDO};
+use crate::ui::{I_BRUSH, I_DOWNLOAD, I_HELP, I_IMAGE, I_REDO, I_RUN, I_SLIDERS, I_TEXT, I_UNDO, I_WAND};
 use eframe::egui::{self, CursorIcon, Id, Rect, RichText, Sense, StrokeKind, Vec2, pos2, vec2};
 
 impl Stuki {
@@ -34,6 +34,17 @@ impl Stuki {
                 .clicked()
             {
                 self.redo();
+            }
+            ui.separator();
+            if ui
+                .button(label(I_WAND, "From spec"))
+                .on_hover_text(
+                    "Build the structograms from the specification on the Specification tab, \
+                     replacing the current ones",
+                )
+                .clicked()
+            {
+                self.wants_spec = true;
             }
             ui.separator();
             ui.toggle_value(&mut self.show_tests, label(I_RUN, "Run tests"))
