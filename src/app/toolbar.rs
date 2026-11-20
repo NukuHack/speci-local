@@ -26,10 +26,7 @@ impl App {
         match act {
             Act::New => self.file_new(),
             Act::Open => self.file_open(),
-            // structograms: a picture to paste into documents; Shift-click: the project as a text line
-            Act::Copy if self.tool == Tool::Stuki && !shift => {
-                self.stuki.copy_image(ui.ctx(), None)
-            }
+            // the whole project as one text line, the same in both tools
             Act::Copy if self.tool == Tool::Stuki => self.stuki.copy_project(ui.ctx()),
             Act::Copy => self.copy_project(ui.ctx()),
             Act::Paste => self.paste_project(),
@@ -37,12 +34,9 @@ impl App {
         }
     }
 
-    /// New, Open | Copy, Paste, Save — reversed for right-to-left layouts.
+    /// New, Open | Copy, Paste, Save — the same in both tools, reversed for right-to-left layouts.
     fn file_buttons(&mut self, ui: &mut egui::Ui, rtl: bool) {
-        let mut groups = [
-            vec![Act::New, Act::Open],
-            vec![Act::Copy, Act::Paste, Act::Save],
-        ];
+        let mut groups = [vec![Act::New, Act::Open], vec![Act::Copy, Act::Paste, Act::Save]];
         if rtl {
             groups.reverse();
             groups.iter_mut().for_each(|g| g.reverse());
@@ -58,13 +52,9 @@ impl App {
                     Act::Open if stuki => (I_OPEN, "Open a .st file (Ctrl+O)"),
                     Act::New => (I_NEW, "New specification (Ctrl+N)"),
                     Act::Open => (I_OPEN, "Open a .sp file (Ctrl+O)"),
-                    Act::Copy if stuki => (
-                        I_COPY,
-                        "Copy the selected structogram as a picture (Ctrl+C)\nShift-click: copy the whole project as one text line (Ctrl+Shift+C)",
-                    ),
                     Act::Copy => (
                         I_COPY,
-                        "Copy the whole project to the clipboard as one compact line (Ctrl+Shift+C)",
+                        "Copy the whole project to the clipboard as one text line (Ctrl+Shift+C)",
                     ),
                     Act::Paste => (I_PASTE, "Read a project from the clipboard (Ctrl+Shift+V)"),
                     Act::Save if stuki => (
@@ -220,23 +210,12 @@ impl App {
         }
     }
 
-    /// Files, panes, Vim, settings and theme, laid out right to left.
+    /// Files, settings and theme, laid out right to left — the same for every tool.
     fn right_buttons(&mut self, ui: &mut egui::Ui) {
         let right = ui.max_rect().right();
         theme_buttons(ui, true);
         self.settings_menu(ui);
         ui.separator();
-        if self.tool == Tool::Spec {
-            self.vim_toggle(ui);
-            ui.separator();
-            ui.toggle_value(&mut self.show_v, I_VIEW)
-                .on_hover_text("Evaluation pane");
-            ui.toggle_value(&mut self.show_d, I_DATA)
-                .on_hover_text("Test cases pane");
-            ui.toggle_value(&mut self.show_s, I_SPEC)
-                .on_hover_text("Specification pane");
-            ui.separator();
-        }
         self.file_buttons(ui, true);
         // changes with the font size and the tool: lay this frame out again with the new width
         let width = right - ui.min_rect().left();
@@ -244,6 +223,24 @@ impl App {
             self.toolbar_right = width;
             ui.ctx().request_discard("toolbar width changed");
         }
+    }
+
+    /// The action bar of the Specification editor: what only this tool does.
+    pub(super) fn spec_menu(&mut self, ui: &mut egui::Ui) {
+        let narrow = self.narrow;
+        ui.horizontal_wrapped(|ui| {
+            self.vim_toggle(ui);
+            if narrow {
+                return; // phones switch panes with the tabs below
+            }
+            ui.separator();
+            ui.toggle_value(&mut self.show_s, I_SPEC)
+                .on_hover_text("Specification pane");
+            ui.toggle_value(&mut self.show_d, I_DATA)
+                .on_hover_text("Test cases pane");
+            ui.toggle_value(&mut self.show_v, I_VIEW)
+                .on_hover_text("Evaluation pane");
+        });
     }
 
     /// Phones: the title, then the buttons, then one tab per pane.

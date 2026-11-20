@@ -6,7 +6,7 @@ use super::rich::Rich;
 use super::settings::{Look, Settings, ZOOM_RANGE};
 use super::{Drag, Stuki};
 use crate::platform;
-use crate::ui::{I_BRUSH, I_DOWNLOAD, I_HELP, I_IMAGE, I_REDO, I_RUN, I_SLIDERS, I_TEXT, I_UNDO, I_WAND};
+use crate::ui::{I_BRUSH, I_DOWNLOAD, I_HELP, I_IMAGE, I_REDO, I_RUN, I_SLIDERS, I_UNDO, I_WAND};
 use eframe::egui::{self, CursorIcon, Id, Rect, RichText, Sense, StrokeKind, Vec2, pos2, vec2};
 
 impl Stuki {
@@ -71,15 +71,6 @@ impl Stuki {
                 .clicked()
             {
                 self.export_png(&ctx, None);
-            }
-            if ui
-                .button(label(I_TEXT, "Copy as text"))
-                .on_hover_text(platform::shortcut(
-                    "Copy the whole project as one STUKI1: text line, to paste it back into speci-local (Ctrl+Shift+C)",
-                ))
-                .clicked()
-            {
-                self.copy_project(&ctx);
             }
             ui.separator();
             ui.toggle_value(&mut self.settings.colorized, "Colorize")

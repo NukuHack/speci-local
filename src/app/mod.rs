@@ -425,6 +425,14 @@ impl App {
         egui::Panel::bottom("status")
             .frame(bar.inner_margin(Margin::symmetric(12, 3)))
             .show(ui, |ui| self.status_bar(ui));
+        if self.tool == Tool::Spec {
+            // the Specification editor's own action bar, like the one of the structograms
+            let menu = bar.inner_margin(Margin::symmetric(12, 6));
+            egui::Panel::top("spec-menu")
+                .resizable(false)
+                .frame(menu)
+                .show(ui, |ui| self.spec_menu(ui));
+        }
         if self.tool == Tool::Stuki {
             self.stuki.show(ui, &self.doc.spec, &self.doc.tests);
             if std::mem::take(&mut self.stuki.wants_spec) {

@@ -118,7 +118,7 @@ fn stuki_drag_and_drop() {
     assert!(h.state().stuki.dirty());
 }
 
-/// Stuki: Ctrl+C and the toolbar's copy button copy a picture, Ctrl+Shift+C the text line.
+/// Stuki: Ctrl+C and the action bar's copy-image button copy a picture, Ctrl+Shift+C the text line.
 #[test]
 fn stuki_copies_pictures() {
     let mut h = Harness::builder()
