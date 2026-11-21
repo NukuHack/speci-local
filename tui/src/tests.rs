@@ -317,11 +317,14 @@ fn failing_test_shows_the_problem_and_enter_jumps_to_it() {
 #[test]
 fn paste_of_a_project_line_imports_it() {
     let mut a = fresh();
-    let line = speci_local::file::to_compact(&speci_local::file::Doc {
-        title: "T".into(),
-        spec: "Be:\nx∈Z\n\nKi:\n\nEf:\n-\n\nUf:\n".into(),
-        tests: vec!["x: 1\n".into()],
-    });
+    let line = speci_local::file::to_compact(
+        &speci_local::file::Doc {
+            title: "T".into(),
+            spec: "Be:\nx∈Z\n\nKi:\n\nEf:\n-\n\nUf:\n".into(),
+            tests: vec!["x: 1\n".into()],
+        },
+        &speci_local::stuki::model::Program::default(),
+    );
     a.on_paste(&line);
     assert_eq!(a.doc.title, "T");
     assert!(a.doc.spec.contains("x∈Z"));

@@ -51,7 +51,7 @@ pub enum Pending {
     New,
     Open,
     Load(PathBuf),
-    Import(Doc),
+    Import(Doc, Option<Program>),
     ImportStuki(Program),
     FromSpec(Program, String),
 }
@@ -491,7 +491,7 @@ impl App {
     pub fn request(&mut self, p: Pending) {
         let dirty = match &p {
             Pending::Quit => self.dirty() || self.stuki.dirty(),
-            Pending::Import(_) | Pending::New | Pending::Open | Pending::Load(_)
+            Pending::Import(..) | Pending::New | Pending::Open | Pending::Load(_)
                 if self.tool == Tool::Spec
                     && !matches!(&p, Pending::Load(f) if Kind::of(f) == Kind::Stuki) =>
             {
@@ -534,9 +534,13 @@ impl App {
                     Overlay::Files(Box::new(Browser::new(false, kind, start.as_deref(), "")));
             }
             Pending::Load(p) => self.load(&p),
-            Pending::Import(d) => {
+            Pending::Import(d, program) => {
                 self.reset_doc(d, None);
                 self.saved = Doc::default();
+                // a project line carries its structograms too
+                if let Some(p) = program {
+                    self.stuki.replace(p, None, false);
+                }
                 self.tool = Tool::Spec;
                 self.say("Project read from the clipboard (not saved to a file yet)");
             }
@@ -677,7 +681,7 @@ impl App {
         let text = match self.tool {
             Tool::Spec => {
                 self.sync();
-                to_compact(&self.doc)
+                to_compact(&self.doc, &self.stuki.program)
             }
             Tool::Stuki => stformat::to_compact(&self.stuki.program),
         };
@@ -709,9 +713,9 @@ impl App {
             return;
         }
         match from_clipboard(text) {
-            Ok(doc) => {
+            Ok(project) => {
                 self.tool = Tool::Spec;
-                self.request(Pending::Import(doc));
+                self.request(Pending::Import(project.doc, project.stuki));
             }
             Err(e) => self.say(e),
         }

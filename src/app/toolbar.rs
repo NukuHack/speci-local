@@ -26,7 +26,10 @@ impl App {
         match act {
             Act::New => self.file_new(),
             Act::Open => self.file_open(),
-            // the whole project as one text line, the same in both tools
+            // structograms: a picture to paste into documents; Shift-click: the project as a text line
+            Act::Copy if self.tool == Tool::Stuki && !shift => {
+                self.stuki.copy_image(ui.ctx(), None)
+            }
             Act::Copy if self.tool == Tool::Stuki => self.stuki.copy_project(ui.ctx()),
             Act::Copy => self.copy_project(ui.ctx()),
             Act::Paste => self.paste_project(),

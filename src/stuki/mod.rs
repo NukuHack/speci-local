@@ -46,25 +46,11 @@ use model::{Diagram, Node, Place, Program, Tag, TextKey};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "gui")]
 use settings::{Look, Settings};
-#[cfg(feature = "gui")]
-use std::path::PathBuf;
 
 #[cfg(feature = "gui")]
 const GREEN: Color32 = Color32::from_rgb(0, 128, 0);
 #[cfg(feature = "gui")]
 const UNDO_LIMIT: usize = 200;
-
-#[cfg(feature = "gui")]
-/// Something that replaces the current structogram (asks first if it has unsaved changes).
-#[derive(Clone)]
-pub enum Pending {
-    New,
-    Open,
-    Load(PathBuf),
-    Import(Program),
-    /// Built from the specification (From spec), with the message for the status bar.
-    FromSpec(Program, String),
-}
 
 #[cfg(feature = "gui")]
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -160,12 +146,6 @@ pub struct Stuki {
     #[cfg(test)]
     #[serde(skip)]
     pub(crate) seen: (Vec<(u64, Rect)>, Vec<Rect>),
-    /// Android: show the app's own Open (false) / Save as (true) list, with this file name.
-    #[serde(skip)]
-    pub file_request: Option<(bool, String)>,
-    /// What to do once the Android "Save as" list has saved the file.
-    #[serde(skip)]
-    pub after_save: Option<Pending>,
     /// "From spec" was clicked: the app builds the structograms from its specification.
     #[serde(skip)]
     pub wants_spec: bool,
