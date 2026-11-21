@@ -82,7 +82,7 @@ struct Routine {
 
 type Stop = (String, Option<u64>);
 
-fn header(name: &str) -> Option<(String, Vec<String>)> {
+pub(crate) fn header(name: &str) -> Option<(String, Vec<String>)> {
     let name = name.trim();
     let open = name.find('(')?;
     let word = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_');

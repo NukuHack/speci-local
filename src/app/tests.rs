@@ -612,7 +612,7 @@ fn stuki_runs_the_test_cases() {
 #[test]
 fn toolbar_widgets_never_overlap() {
     let mut bad = vec![];
-    for tool in [Tool::Spec, Tool::Stuki] {
+    for tool in [Tool::Spec, Tool::Stuki, Tool::Code] {
         for font in [12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0] {
             for width in (500..=1900).step_by(40) {
                 let mut h = Harness::builder()
@@ -673,4 +673,120 @@ fn leaves(n: egui_kittest::Node<'_>, clip: egui::Rect, out: &mut Vec<(String, eg
     for c in n.children() {
         leaves(c, clip, out);
     }
+}
+
+// ------------------------------------------------------------------ the Code tab
+
+fn code_harness() -> Harness<'static, App> {
+    let mut h = Harness::builder()
+        .with_size([1360.0, 900.0])
+        .build_eframe(|cc| {
+            let mut a = create(cc, None);
+            a.doc = sample();
+            a.tool = Tool::Code;
+            a
+        });
+    h.run_steps(4);
+    h
+}
+
+/// The first visit writes the program; Console reads instead of using the test's values.
+#[test]
+fn code_tab_writes_the_program_from_the_spec() {
+    let mut h = code_harness();
+    let text = h.state().code.text.clone();
+    assert!(text.contains("class Program"), "{text}");
+    assert!(
+        text.contains("int[] szamok = new int[] { 0, 3, 72, 81, 4, 5 };"),
+        "{text}"
+    );
+    h.get_by_label("Console").click();
+    h.run_steps(3);
+    let text = h.state().code.text.clone();
+    assert!(text.contains("Console.ReadLine()"), "{text}");
+    assert!(!text.contains("{ 0, 3, 72"), "{text}");
+    assert_eq!(h.state().code.stdin, "5\n3 72 81 4 5\n");
+}
+
+/// Switching the mode rewrites only unedited code; From spec asks before replacing edits.
+#[test]
+fn code_tab_keeps_edits_and_asks_before_replacing_them() {
+    use crate::ui::I_WAND;
+    let mut h = code_harness();
+    h.state_mut().code.text.push_str("// mine\n");
+    h.get_by_label("Console").click();
+    h.run_steps(3);
+    assert!(h.state().code.text.ends_with("// mine\n"));
+    assert!(!h.state().code.text.contains("Console.ReadLine()"));
+    h.get_by_label(&format!("{I_WAND}  From spec + stuki"))
+        .click();
+    h.run_steps(3);
+    assert!(h.state().code.confirm);
+    assert!(h.state().code.text.ends_with("// mine\n"));
+    h.get_by_label("Replace").click();
+    h.run_steps(3);
+    assert!(!h.state().code.confirm);
+    assert!(h.state().code.text.contains("Console.ReadLine()"));
+    assert!(!h.state().code.text.contains("// mine"));
+}
+
+/// With dotnet on the PATH: build and run, with the test's values and with console input.
+#[test]
+fn code_tab_runs_with_dotnet() {
+    use crate::ui::I_RUN;
+    if std::process::Command::new("dotnet")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("no dotnet: skipped");
+        return;
+    }
+    let mut h = code_harness();
+    let finish = |h: &mut Harness<'static, App>| {
+        h.run_steps(2);
+        for _ in 0..6000 {
+            if h.state().code.run.is_none() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            h.step();
+        }
+        panic!("the run never finished");
+    };
+    h.get_by_label(&format!("{I_RUN}  Run")).click();
+    finish(&mut h);
+    assert_eq!(
+        h.state().code.output.trim(),
+        "db = 3",
+        "{}",
+        h.state().code.status
+    );
+
+    h.get_by_label("Console").click();
+    h.run_steps(3);
+    h.get_by_label(&format!("{I_RUN}  Run")).click();
+    finish(&mut h);
+    assert_eq!(
+        h.state().code.output.trim(),
+        "3",
+        "{}",
+        h.state().code.status
+    );
+
+    // a compile error is shown with its line marked
+    h.state_mut().code.text = h
+        .state()
+        .code
+        .text
+        .replace("db = db + 1;", "db = db + oops;");
+    h.run_steps(2);
+    h.get_by_label(&format!("{I_RUN}  Run")).click();
+    finish(&mut h);
+    assert!(
+        h.state().code.output.contains("error CS0103"),
+        "{}",
+        h.state().code.output
+    );
+    assert!(!h.state().code.errors.is_empty());
 }

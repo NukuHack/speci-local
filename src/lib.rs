@@ -8,6 +8,7 @@
 #[cfg(feature = "gui")]
 pub mod app;
 mod compact;
+pub mod csharp;
 pub mod data;
 pub mod diag;
 #[cfg(feature = "gui")]

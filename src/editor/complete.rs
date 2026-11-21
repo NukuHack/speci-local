@@ -275,6 +275,7 @@ impl Completion {
         let cands = match lang {
             Lang::Spec => spec_items(symbols, line_start, after_elem),
             Lang::Data => data_items(symbols, line_start),
+            Lang::Csharp => vec![],
         };
         let lower = prefix.to_lowercase();
         let mut items: Vec<Item> = cands
@@ -303,6 +304,7 @@ fn in_comment_or_string(before: &[char], lang: Lang) -> bool {
     let quotes = line.matches('"').count() % 2 == 1;
     match lang {
         Lang::Data => quotes || line.contains('#'),
+        Lang::Csharp => quotes || line.contains("//"),
         Lang::Spec => {
             let open_block = text
                 .rfind("/*")

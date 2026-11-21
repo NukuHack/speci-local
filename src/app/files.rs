@@ -214,6 +214,7 @@ impl App {
         match self.tool {
             Tool::Spec => self.status = msg,
             Tool::Stuki => self.stuki.status = msg,
+            Tool::Code => self.code.status = msg,
         }
     }
 
@@ -224,12 +225,13 @@ impl App {
         match self.tool {
             Tool::Spec => self.status = msg,
             Tool::Stuki => self.stuki.status = msg,
+            Tool::Code => self.code.status = msg,
         }
     }
 
     fn web_link(&self) -> String {
         match self.tool {
-            Tool::Spec => crate::file::to_web_link(&self.doc),
+            Tool::Spec | Tool::Code => crate::file::to_web_link(&self.doc),
             Tool::Stuki => stuki::format::to_web_link(&self.stuki.program),
         }
     }

@@ -31,6 +31,7 @@ impl App {
                 self.stuki.copy_image(ui.ctx(), None)
             }
             Act::Copy if self.tool == Tool::Stuki => self.stuki.copy_project(ui.ctx()),
+            Act::Copy if self.tool == Tool::Code => self.code_copy(ui.ctx()),
             Act::Copy => self.copy_project(ui.ctx()),
             Act::Paste => self.paste_project(),
             Act::Save => self.file_save(shift),
@@ -39,7 +40,10 @@ impl App {
 
     /// New, Open | Copy, Paste, Save — the same in both tools, reversed for right-to-left layouts.
     fn file_buttons(&mut self, ui: &mut egui::Ui, rtl: bool) {
-        let mut groups = [vec![Act::New, Act::Open], vec![Act::Copy, Act::Paste, Act::Save]];
+        let mut groups = [
+            vec![Act::New, Act::Open],
+            vec![Act::Copy, Act::Paste, Act::Save],
+        ];
         if rtl {
             groups.reverse();
             groups.iter_mut().for_each(|g| g.reverse());
@@ -59,6 +63,10 @@ impl App {
                     Act::Copy if stuki => (
                         I_COPY,
                         "Copy the selected structogram as a picture (Ctrl+C)\nShift-click: copy the structograms as one text line (Ctrl+Shift+C)",
+                    ),
+                    Act::Copy if self.tool == Tool::Code => (
+                        I_COPY,
+                        "Copy the C# program to the clipboard (Ctrl+Shift+C)",
                     ),
                     Act::Copy => (
                         I_COPY,
@@ -122,7 +130,7 @@ impl App {
     }
 
     /// Switches the Vim keybindings of the code editors on and off.
-    fn vim_toggle(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn vim_toggle(&mut self, ui: &mut egui::Ui) {
         let label = RichText::new("Vim").monospace();
         if ui
             .toggle_value(&mut self.vim, label)
@@ -150,6 +158,8 @@ impl App {
         .on_hover_text("Specification editor with test cases");
         ui.selectable_value(&mut self.tool, Tool::Stuki, format!("{I_STUKI}  Stuki"))
             .on_hover_text("Structogram editor (saved in the same .sp file)");
+        ui.selectable_value(&mut self.tool, Tool::Code, "C#  Code")
+            .on_hover_text("C# program written from the specification and the structograms, with a Run button (needs dotnet)");
     }
 
     /// The task title, at most `width` wide, then the unsaved-changes dot (for the whole project).
@@ -260,7 +270,7 @@ impl App {
             ui.separator();
             self.settings_menu(ui);
         });
-        if self.tool == Tool::Stuki {
+        if self.tool != Tool::Spec {
             return;
         }
         ui.horizontal(|ui| {
@@ -292,6 +302,10 @@ impl App {
     }
 
     pub(super) fn status_bar(&mut self, ui: &mut egui::Ui) {
+        if self.tool == Tool::Code {
+            self.code_status(ui);
+            return;
+        }
         if self.tool == Tool::Stuki {
             ui::status_bar(
                 ui,

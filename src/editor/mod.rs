@@ -7,7 +7,7 @@ mod tests;
 mod vim;
 
 pub use complete::{Completion, Item, Kind, scan_symbols};
-pub use highlight::{Palette, highlight_data, highlight_spec, palette};
+pub use highlight::{Palette, highlight_csharp, highlight_data, highlight_spec, palette};
 pub use vim::Vim;
 
 use eframe::egui::{
@@ -29,6 +29,8 @@ pub const SYMBOL_KEYS: &[(Key, &str)] = &[
 pub enum Lang {
     Spec,
     Data,
+    /// The C# program of the Code tab.
+    Csharp,
 }
 
 fn char_to_byte(s: &str, c: usize) -> usize {
@@ -122,9 +124,20 @@ pub fn code_editor(
         {
             replace(ui.ctx(), id, text, a - 1, a, sym);
         }
-        // Tab inserts two spaces: a real tab character is invalid in YAML test data
+        // Tab inserts spaces: a real tab character is invalid in YAML test data (C# gets four)
         if !open && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
-            replace_selection(ui.ctx(), id, text, "  ");
+            let tab = if lang == Lang::Csharp { "    " } else { "  " };
+            replace_selection(ui.ctx(), id, text, tab);
+        }
+        // Enter in C# keeps the indentation and goes one level deeper after a `{`
+        if lang == Lang::Csharp
+            && !open
+            && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
+        {
+            let n = text.chars().count();
+            let (a, b) = cursor_of(ui.ctx(), id).unwrap_or((n, n));
+            let insert = csharp_newline(text, a, b);
+            replace(ui.ctx(), id, text, a, b, &insert);
         }
         // Enter in test data indents like a JSON editor
         if lang == Lang::Data
@@ -242,6 +255,30 @@ fn data_newline(text: &str, a: usize, b: usize) -> String {
     }
 }
 
+/// What Enter inserts in C#: the indentation of the line, one level more after `{` (and the
+/// closing `}` on a line of its own when the cursor sits between the braces). `$` marks the cursor.
+fn csharp_newline(text: &str, a: usize, b: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let a = a.min(chars.len());
+    let b = b.clamp(a, chars.len());
+    let start = chars[..a]
+        .iter()
+        .rposition(|&c| c == '\n')
+        .map_or(0, |i| i + 1);
+    let line = &chars[start..a];
+    let indent: String = line.iter().take_while(|&&c| c == ' ').collect();
+    let last = line.iter().rev().find(|c| !c.is_whitespace());
+    let next = chars[b..]
+        .iter()
+        .take_while(|&&c| c != '\n')
+        .find(|c| !c.is_whitespace());
+    match (last, next) {
+        (Some('{'), Some('}')) => format!("\n{indent}    $\n{indent}"),
+        (Some('{'), _) => format!("\n{indent}    "),
+        _ => format!("\n{indent}"),
+    }
+}
+
 fn popup_keys(ui: &egui::Ui, id: Id, text: &mut String, comp: &mut Completion) {
     let mut accept: Option<Item> = None;
     ui.input_mut(|i| {
@@ -298,6 +335,7 @@ fn text_area(
         let mut job = match lang {
             Lang::Spec => highlight_spec(buf.as_str(), font.clone(), p, errors),
             Lang::Data => highlight_data(buf.as_str(), font.clone(), p, errors),
+            Lang::Csharp => highlight_csharp(buf.as_str(), font.clone(), p, errors),
         };
         job.wrap.max_width = f32::INFINITY;
         ui.painter().layout_job(job)
@@ -329,6 +367,7 @@ fn text_area(
         let name = match lang {
             Lang::Spec => "Specification editor",
             Lang::Data => "Test case editor",
+            Lang::Csharp => "C# editor",
         };
         let _ = out.response.response.clone().accessible_name(name);
         let mut line = 1;

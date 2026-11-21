@@ -1,8 +1,9 @@
-//! The application window: the specification editor with its test cases and results, and the
-//! Stuki tab.
+//! The application window: the specification editor with its test cases and results, the
+//! Stuki tab and the C# Code tab.
 
 #[cfg(target_os = "android")]
 mod android_files;
+mod code;
 mod dialogs;
 mod files;
 mod job;
@@ -57,7 +58,7 @@ enum Tab {
     Eval,
 }
 
-/// The two editors, each in its own tab.
+/// The editors, each in its own tab.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Default, Debug)]
 pub enum Tool {
     /// Specifications and their test cases.
@@ -65,6 +66,8 @@ pub enum Tool {
     Spec,
     /// Structograms.
     Stuki,
+    /// The C# program, written from the other two and run with dotnet.
+    Code,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Default)]
@@ -117,6 +120,8 @@ struct App {
     /// The editor shown: specifications or structograms.
     tool: Tool,
     stuki: Stuki,
+    /// The C# program of the Code tab.
+    code: code::Code,
     /// Only one pane fits on screen (phones): `tab` picks it.
     #[serde(skip)]
     narrow: bool,
@@ -190,6 +195,7 @@ impl Default for App {
             tab: Tab::Spec,
             tool: Tool::Spec,
             stuki: Stuki::default(),
+            code: code::Code::default(),
             narrow: false,
             toolbar_right: 0.0,
             #[cfg(target_os = "android")]
@@ -277,7 +283,11 @@ impl eframe::App for App {
         if keys.run && self.tool == Tool::Spec {
             self.evaluate(now);
         }
+        if keys.run && self.tool == Tool::Code {
+            self.code_run(&ctx);
+        }
         self.poll_job();
+        self.poll_code(&ctx);
         self.auto_evaluate(&ctx, now);
         if keys.save || keys.save_as {
             self.file_save(keys.save_as);
@@ -390,6 +400,7 @@ impl App {
             match self.tool {
                 Tool::Spec => self.copy_project(ctx),
                 Tool::Stuki => self.stuki.copy_project(ctx),
+                Tool::Code => self.code_copy(ctx),
             }
         }
         if paste {
@@ -428,6 +439,15 @@ impl App {
                 .resizable(false)
                 .frame(menu)
                 .show(ui, |ui| self.spec_menu(ui));
+        }
+        if self.tool == Tool::Code {
+            let menu = bar.inner_margin(Margin::symmetric(12, 6));
+            egui::Panel::top("code-menu")
+                .resizable(false)
+                .frame(menu)
+                .show(ui, |ui| self.code_menu(ui));
+            self.code_layout(ui);
+            return;
         }
         if self.tool == Tool::Stuki {
             self.stuki.show(ui, &self.doc.spec, &self.doc.tests);

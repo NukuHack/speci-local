@@ -1,4 +1,4 @@
-//! Syntax highlighting for specifications and (YAML) test data.
+//! Syntax highlighting for specifications, (YAML) test data and C#.
 
 use crate::parser::{MACROS, closing_quotes, macro_alias};
 use eframe::egui::{Color32, FontId, TextFormat, text::LayoutJob};
@@ -268,6 +268,135 @@ pub fn highlight_data(text: &str, font: FontId, p: &Palette, errors: &[usize]) -
             j.push(&rest[..n], color);
             rest = &rest[n..];
         }
+    }
+    j.job
+}
+
+// ---------------------------------------------------------------- C#
+
+const CS_KEYWORDS: &[&str] = &[
+    "using",
+    "namespace",
+    "class",
+    "struct",
+    "enum",
+    "static",
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "readonly",
+    "const",
+    "new",
+    "return",
+    "if",
+    "else",
+    "for",
+    "foreach",
+    "while",
+    "do",
+    "switch",
+    "case",
+    "break",
+    "continue",
+    "default",
+    "in",
+    "out",
+    "ref",
+    "is",
+    "as",
+    "true",
+    "false",
+    "null",
+    "this",
+    "var",
+    "void",
+    "try",
+    "catch",
+    "finally",
+    "throw",
+    "get",
+    "set",
+];
+const CS_TYPES: &[&str] = &[
+    "int", "long", "double", "float", "bool", "string", "char", "byte", "short", "uint", "ulong",
+    "decimal", "object",
+];
+
+/// Length of a quoted text starting at `rest` (`"` or `'`), honouring `\` escapes.
+fn quoted_len(rest: &str) -> usize {
+    let quote = rest.chars().next().unwrap_or('"');
+    let mut escaped = false;
+    for (i, c) in rest.char_indices().skip(1) {
+        if c == '\n' {
+            return i; // an unclosed text ends with its line
+        }
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == quote {
+            return i + 1;
+        }
+    }
+    rest.len()
+}
+
+pub fn highlight_csharp(text: &str, font: FontId, p: &Palette, errors: &[usize]) -> LayoutJob {
+    let mut j = Job {
+        job: LayoutJob::default(),
+        font,
+        line: 1,
+        errors,
+        err_bg: p.error_bg,
+        last: p.text,
+    };
+    let mut i = 0;
+    // the word before: `class Name`, `struct Name`, `new Name` name a type
+    let mut after_type_kw = false;
+    while let Some(c) = text[i..].chars().next() {
+        let rest = &text[i..];
+        let ident = |c: char| c.is_alphanumeric() || c == '_';
+        let (n, color) = if rest.starts_with("//") {
+            (rest.find('\n').unwrap_or(rest.len()), p.comment)
+        } else if rest.starts_with("/*") {
+            (rest.find("*/").map_or(rest.len(), |k| k + 2), p.comment)
+        } else if c == '"' || c == '\'' {
+            (quoted_len(rest), p.string)
+        } else if c.is_ascii_digit() {
+            (
+                take_while(rest, |c| c.is_ascii_alphanumeric() || c == '.'),
+                p.number,
+            )
+        } else if ident(c) || c == '@' {
+            let n = c.len_utf8() + take_while(&rest[c.len_utf8()..], ident);
+            let word = rest[..n].trim_start_matches('@');
+            let next = rest[n..].trim_start_matches([' ', '\t']).chars().next();
+            let color = if CS_KEYWORDS.contains(&word) {
+                p.keyword
+            } else if CS_TYPES.contains(&word) || after_type_kw {
+                p.ty
+            } else if next == Some('(') {
+                p.func
+            } else if word.starts_with(char::is_uppercase) && matches!(next, Some('.' | ' ')) {
+                p.ty
+            } else {
+                p.text
+            };
+            after_type_kw = matches!(word, "class" | "struct" | "enum" | "new");
+            (n, color)
+        } else if c.is_whitespace() {
+            (take_while(rest, char::is_whitespace), p.text)
+        } else if "{}()[];,.".contains(c) {
+            (c.len_utf8(), p.punct)
+        } else {
+            (c.len_utf8(), p.op)
+        };
+        if !c.is_whitespace() && !ident(c) && c != '@' {
+            after_type_kw = false;
+        }
+        j.push(&rest[..n], color);
+        i += n;
     }
     j.job
 }

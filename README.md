@@ -23,6 +23,7 @@ Windowson, Linuxon, macOS-en és Androidon fut, egyetlen Rust kódbázisból ([e
 - [Újdonságok (v1.0)](#újdonságok-v10)
 - [Specifikációk](#specifikációk)
 - [Stuki (struktogramok)](#stuki-struktogramok)
+- [C# (Code fül)](#c-code-fül)
 - [Fájlok és megosztás](#fájlok-és-megosztás)
 - [Billentyűparancsok](#billentyűparancsok)
 - [Telefonok és Android](#telefonok-és-android)
@@ -190,6 +191,15 @@ A futás üzenettel megáll, ha egy szöveg nem olvasható lépésként, egy vá
 - **Színek**: szövegszín és szöveghátter a szöveg kijelölt részére (vagy az egészére), elemháttér és struktogramháttér, a projekttel együtt mentett, szerkeszthető palettákról. A **Colorize** fajtájuk szerint színezi az elemeket.
 - A csúszkák gomb alatt van a betűtípus és a webalkalmazás haladó beállításai: vízszintes / függőleges távolságok (összekapcsolva vagy külön), illesztés, blokkmagasság, térköz, keretvastagság és jobb oldali margó. Nagyítani a csúszkával, Ctrl+görgővel vagy csippentéssel lehet.
 
+## C# (Code fül)
+
+A harmadik, **C# Code** fül egyetlen C# szerkesztő. Szintaxiskiemelése, behúzása (Tab: négy szóköz, Enter: megtartja a behúzást, `{` után eggyel beljebb) és ugyanaz a **Vim** kapcsolója van, mint a specifikációnak.
+
+- **From spec + stuki**: a specifikációból és a struktogramokból megírja a C# programot, a SKILL.md 7. fejezetének szabályai szerint (egy struktogramelem egy utasítás, a tömbök a specifikáció indexeit tartják: `int[] t = new int[n + 1];`, a 0. elem kihasználatlan). Ha a Stuki fül még üres, a *From spec* által építendő struktogramokat használja. Függvényes specifikációnál a változók `static` mezők. Ami nem fordítható le, azt `// TODO:` megjegyzés jelzi, és a figyelmeztetés ikonra mutatva kilistázza a szerkesztő. Ha a kódot módosítottad, a gomb megkérdezi, felülírja-e.
+- **Test values / Console**: *Test values* esetén a kiválasztott teszteset bemenő értékei a programba vannak írva, és a program kiírja az eredményeket (`db = 3`). *Console* esetén a program a konzolról olvas (egy skalár soronként, egy tömb soronként), és csak az értékeket írja ki. A kapcsoló átírja a programot, ha nem módosítottad; a *Fill from test case* a teszteset bemenetét a megfelelő formában a bemeneti mezőbe írja.
+- **Run** (Ctrl+Enter): a `PATH`-on lévő `dotnet`-tel lefordítja és lefuttatja a programot (Linuxon, Windowson, macOS-en), a háttérben, **Stop** gombbal megállítható. A fordítási hibák a Output panelben jelennek meg, a hibás sorok pirosan kiemelve. A cél keretrendszert a telepített SDK határozza meg. Telefonon a futtatás nem érhető el.
+- A generált program alapból **nem kezel kivételt és nem ellenőriz bemenetet**; ha ilyet szeretnél, add hozzá kézzel.
+
 ## Fájlok és megosztás
 
 Fájlt a Ctrl+O-val, az ablakra húzva, vagy a parancssorból (`speci-local fajl.sp`) lehet megnyitni. Kilépéskor a munkamenet automatikusan mentődik.
@@ -244,7 +254,7 @@ macOS-en a Ctrl helyett ⌘, az Alt helyett ⌥ használandó.
 | Ctrl+N / Ctrl+O | Új projekt / projekt megnyitása |
 | Ctrl+S / Ctrl+Shift+S | Mentés / mentés másként |
 | Ctrl+Shift+C / Ctrl+Shift+V | Az egész projekt másolása / beillesztése egy sorként |
-| Ctrl+Enter | A specifikáció kiértékelése |
+| Ctrl+Enter | A specifikáció kiértékelése (Code fülön: a program futtatása) |
 | Alt+1 … Alt+6 | ∈ ∀ ∃ ≠ ≤ ≥ beszúrása |
 | ← / → | Stepper: előző / következő lépés |
 | Ctrl+Z / Ctrl+Y | Stuki: visszavonás / újra |
