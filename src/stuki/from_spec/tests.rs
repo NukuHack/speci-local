@@ -391,3 +391,16 @@ fn general_sum_needs_an_operation() {
     // a function with one parameter can't combine two values
     assert!(err("s=SZUMMA(i=1..n, t[i], 0, f)").contains("f"));
 }
+
+#[test]
+fn a_pattern_written_twice_is_computed_once() {
+    let out = outline_of(
+        "Be: n∈N, pontok∈Z[1..n]\nKi: db∈N\nFv: elsoUres:Z[]->N,\nelsoUres(t)={KERES(j=1..n,t[j]=0).2, ha KERES(j=1..n,t[j]=0).1; n egyébként}\nEf: -\nUf: db=elsoUres(pontok)\n",
+    );
+    assert!(
+        out.ends_with(
+            "vars van:Logikai, ind:Egész, j:Egész\nj:=1\n[while j≤n és nem (t[j]=0)]\n  j:=j+1\nvan:=j≤n\n[if van]\n  ind:=j\nreturn {ind, ha van; n egyébként}\n"
+        ),
+        "{out}"
+    );
+}

@@ -18,6 +18,7 @@ It runs on Windows, Linux, macOS and Android from one Rust code base ([egui](htt
 ## Contents
 
 - [Install](#install)
+- [Antivirus warnings](#antivirus-warnings)
 - [Quick start](#quick-start)
 - [What's new in v1.0](#whats-new-in-v10)
 - [Specifications](#specifications)
@@ -28,7 +29,7 @@ It runs on Windows, Linux, macOS and Android from one Rust code base ([egui](htt
 - [Build from source](#build-from-source)
 - [Development](#development)
 - [Releasing](#releasing)
-- [Code signing policy](#code-signing-policy)
+- [Privacy](#privacy)
 - [Not included](#not-included)
 - [Credits](#credits)
 
@@ -48,6 +49,15 @@ Notes:
 - **macOS**: the app isn't notarized by Apple, so the first start is blocked. Allow it in *System Settings → Privacy & Security → Open Anyway*, or run `xattr -dr com.apple.quarantine /Applications/speci-local.app`.
 - **Linux**: needs OpenGL and the usual windowing libraries (X11/Wayland, `libxkbcommon`), and the Open/Save dialogs need `xdg-desktop-portal` (standard on GNOME and KDE).
   The first start installs a desktop entry (`~/.local/share/applications/speci-local.desktop`) and an icon (`~/.local/share/icons/hicolor/256x256/apps/speci-local.png`), so the app shows its icon and appears in the application menu. Delete those two files to remove it again.
+
+## Antivirus warnings
+
+The released programs aren't code-signed, so Windows SmartScreen or an antivirus program may warn about them or even quarantine them.
+That is common for small unsigned apps that few people have downloaded yet, and it doesn't mean anything harmful was found.
+On Windows, *More info → Run anyway* starts the app.
+
+Every release is built from this repository by the [Release workflow](.github/workflows/release.yml) on GitHub's own machines.
+If you still don't feel safe running a downloaded program, build it yourself from the source code: see [Build from source](#build-from-source). It takes a few minutes, and the result is the same app.
 
 ## Quick start
 
@@ -81,6 +91,13 @@ Notes:
 5. Press **Run tests**: the structogram is run on the same test case and gets its own green mark.
 
 ## What's new in v1.0
+
+In v1.0.1:
+
+- **Open in web editor** and **Copy web editor link** in the settings menu open the current specification or structograms in the ELTE web editor; Paste also reads the specification editor's `?data=` links.
+- A function whose body is a pattern with several results (like `f:N->N, f(i)=FELTMAX(…)`) is now an error, as it is in the web editor; take one part with `.3`, or list every part in the codomain.
+- Stuki: the move and delete buttons are block-height squares, the "+" tile is a circle, and empty statements (`-`) can no longer be dragged out of loops and branches.
+- The first start offers to add the app to the application menu (Linux) or the Start menu (Windows).
 
 Key improvements and changes since v0.8.0:
 
@@ -177,9 +194,9 @@ A run is stopped with a message when a text can't be read as a step, a variable 
 
 Open a file with Ctrl+O, by dragging it onto the window, or from the command line (`speci-local file.sp`). Your session is also autosaved when you quit.
 
-### `.sp`: a specification with its test cases
+### `.sp`: the whole project in one file
 
-A `.sp` file is plain text: the specification, with each test case stored as a comment.
+A project is one `.sp` file: the specification, its test cases and the structograms of the Stuki tab. Save, Open and New work on all three at once, from either tab. The file is plain text: the specification, with each test case and the structograms stored as comments.
 
 ```text
 // title: Odd numbers
@@ -192,21 +209,30 @@ n: 5
 szamok: [3, 72, 81, 4, 5]
 db: 3
 ---*/
+
+/*--- stuki ---
+{
+  "nodes": { … },
+  "structograms": [ … ],
+  …
+}
+---*/
 ```
 
-Because the test cases are comments, the whole file is still a valid specification. You can paste it into the ELTE editor as-is.
+Because the test cases and the structograms are comments, the whole file is still a valid specification. You can paste it into the ELTE editor as-is. The structograms are the web Stuki's JSON (see below). A project whose Stuki tab was never touched has no `stuki` block.
 
 A file named after its task follows the task: rename the task, save, and the file gets the new name (unless another file already has it).
 
-### `.st`: structograms
+### `.st`: structograms from the web Stuki
 
-A `.st` file is the web app's own state as JSON (the `nodes` and `structograms` it keeps, plus the color palettes), so the same data moves between the two. Colored text is kept as the HTML the web app uses (`<span style="color: rgb(255, 0, 0);">…</span>`).
+Opening a `.st` file (or dropping it on the window) reads its structograms into the current project in place of the ones there; Ctrl+Z on the Stuki tab brings those back, and the next save writes them into the `.sp` file. A `.st` file is the web app's own state as JSON (the `nodes` and `structograms` it keeps, plus the color palettes), so the same data moves between the two. Colored text is kept as the HTML the web app uses (`<span style="color: rgb(255, 0, 0);">…</span>`).
 
 ### One line for a whole project
 
-- On the Specification tab, the copy button (Ctrl+Shift+C) puts the specification and all test cases on the clipboard as one compressed line, `SPECI1:…`. It's handy for sending through chat.
-- On the Stuki tab, **Copy as text**, Ctrl+Shift+C or Shift-clicking the copy button copies one `STUKI1:…` line.
-- Paste (Ctrl+Shift+V) reads either line and opens it on the right tab. It also accepts plain specification text, a `.st` file's text, and the web app's share links (`…/stuki/v1/?data=…`).
+- On the Specification tab, the copy button (Ctrl+Shift+C) puts the whole project (the specification, all test cases and the structograms) on the clipboard as one compressed line, `SPECI1:…`. It's handy for sending through chat.
+- On the Stuki tab, **Copy as text**, Ctrl+Shift+C or Shift-clicking the copy button copies only the structograms, as one `STUKI1:…` line.
+- **Open in web editor** in the settings menu opens the current tab's project in the ELTE web editor; **Copy web editor link** copies that link instead. The web editor has no title, so a specification's title goes in as its first comment line.
+- Paste (Ctrl+Shift+V) reads either line and opens it on the right tab: a `SPECI1:` line replaces the whole project, a `STUKI1:` line only the structograms (Ctrl+Z undoes that). It also accepts plain specification text, a `.st` file's text, and the web apps' share links (`…/specifikacio/v1/?data=…`, `…/stuki/v1/?data=…`).
 - If the system clipboard can't be read, a box opens where you can paste with Ctrl+V instead.
 
 ## Keyboard shortcuts
@@ -215,7 +241,7 @@ On macOS, use ⌘ instead of Ctrl and ⌥ instead of Alt.
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+N / Ctrl+O | New / open, on the current tab |
+| Ctrl+N / Ctrl+O | New / open project |
 | Ctrl+S / Ctrl+Shift+S | Save / save as |
 | Ctrl+Shift+C / Ctrl+Shift+V | Copy / paste the whole project as one line |
 | Ctrl+Enter | Evaluate the specification |
@@ -249,19 +275,66 @@ On a narrow screen (a phone, or a narrow window on the desktop), one pane is sho
 
 ## Build from source
 
-You need a [Rust toolchain](https://rustup.rs) (edition 2024).
+You need [Rust](https://rustup.rs) (stable, edition 2024) and the source code: either `git clone https://github.com/FCsab/speci-local`, or *Source code (zip)* from a [release](https://github.com/FCsab/speci-local/releases), unpacked.
+Run the build commands in the source folder. The first build downloads the libraries it needs and takes a few minutes; `cargo run --release` builds and starts the app in one step.
 
-```sh
-cargo run --release
-```
+### Windows
 
-On Debian or Ubuntu, install the build dependencies first:
+1. Install Rust with [rustup-init.exe](https://rustup.rs) (or `winget install Rustlang.Rustup`). When it asks, let it install the Visual Studio C++ build tools too: Rust needs their linker.
+2. Open a new PowerShell window in the source folder and build:
 
-```sh
-sudo apt-get install libxkbcommon-dev libgtk-3-dev
-```
+   ```powershell
+   cargo build --release
+   ```
 
-On macOS, `scripts/bundle-macos.sh` builds `speci-local.app` (a universal binary for Apple Silicon and Intel) and zips it.
+3. The program is `target\release\speci-local.exe`.
+
+### Linux
+
+1. Install a C compiler and the libraries the window and the file dialogs build against:
+
+   ```sh
+   sudo apt-get install build-essential curl libxkbcommon-dev libgtk-3-dev   # Debian, Ubuntu
+   sudo dnf install gcc libxkbcommon-devel gtk3-devel                        # Fedora
+   sudo pacman -S base-devel libxkbcommon gtk3                               # Arch
+   ```
+
+2. Install Rust:
+
+   ```sh
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+3. Open a new terminal in the source folder and build:
+
+   ```sh
+   cargo build --release
+   ```
+
+4. The program is `target/release/speci-local`.
+
+### macOS
+
+1. Install Apple's command line tools (compiler and linker):
+
+   ```sh
+   xcode-select --install
+   ```
+
+2. Install Rust:
+
+   ```sh
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+3. Open a new terminal in the source folder and build:
+
+   ```sh
+   cargo build --release                # the program: target/release/speci-local
+   scripts/bundle-macos.sh              # or a whole app: target/speci-local.app (and a .zip of it)
+   ```
+
+   An app you built yourself isn't quarantined, so macOS starts it without the *Open Anyway* step.
 
 ### Nix
 
@@ -303,10 +376,10 @@ CI runs all three on every push, builds the desktop app on Windows, Linux and ma
 | `src/parser/` | lexer, block splitter, grammar and static checks of specifications |
 | `src/eval/` | the evaluator: values, operators, patterns, function calls, stepper trace |
 | `src/data.rs`, `src/runner.rs` | reading YAML test cases, running them and explaining the verdict |
-| `src/file.rs`, `src/compact.rs` | `.sp` files and the `SPECI1:` line |
+| `src/file.rs`, `src/compact.rs` | `.sp` project files and the `SPECI1:` line |
 | `src/editor/` | the code editor: highlighting, completion and Vim keys (`vim/`) |
 | `src/app/` | the window: toolbar, panes, results, stepper, dialogs, background evaluation |
-| `src/stuki/` | the structogram editor: model, layout, canvas, colors, PNG and `.st` files |
+| `src/stuki/` | the structogram editor: model, layout, canvas, colors, PNG, and the web Stuki's JSON (`.st` files and the `stuki` block of `.sp` files) |
 | `src/stuki/run/` | running structograms on test cases: compiler and machine |
 | `src/platform.rs` | what differs between the desktop systems and Android |
 | `android/` | the Android wrapper crate |
@@ -329,18 +402,9 @@ The workflow builds every platform, runs the tests, and attaches the files to th
 
 For APKs that update in place, add the repository secrets `ANDROID_KEYSTORE` (the base64 of a `.jks` file) and `ANDROID_KEYSTORE_PASSWORD`. Without them, each release is signed with a new throwaway key, so the old version must be uninstalled before installing a new one.
 
-To sign the Windows `.exe` (see [Code signing policy](#code-signing-policy)), add the repository secret `SIGNPATH_API_TOKEN` and the repository variable `SIGNPATH_ORGANIZATION_ID`. The SignPath project must be called `speci-local`, with a signing policy `release-signing`. Without them the `.exe` stays unsigned. Approve each signing request on signpath.io while the workflow waits.
+## Privacy
 
-## Code signing policy
-
-The Windows `.exe` is signed. Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
-
-- Committers and reviewers: [FCsab](https://github.com/FCsab)
-- Approvers: [FCsab](https://github.com/FCsab)
-
-Every release is built from this repository by the Release workflow on GitHub's own runners, and each signing request is approved by hand.
-
-**Privacy:** this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The one exception is the update check: at start the app asks GitHub (`api.github.com`) for the number of the latest release, and sends nothing else. Turn it off with *Don't show again* in the update dialog.
+The app sends nothing anywhere unless you ask it to. The one exception is the update check: at start the app asks GitHub (`api.github.com`) for the number of the latest release, and sends nothing else. Turn it off with *Don't show again* in the update dialog.
 
 ## Not included
 

@@ -18,6 +18,7 @@ Windowson, Linuxon, macOS-en és Androidon fut, egyetlen Rust kódbázisból ([e
 ## Tartalom
 
 - [Telepítés](#telepítés)
+- [Víruskereső-figyelmeztetések](#víruskereső-figyelmeztetések)
 - [Gyors kezdés](#gyors-kezdés)
 - [Újdonságok (v1.0)](#újdonságok-v10)
 - [Specifikációk](#specifikációk)
@@ -28,7 +29,7 @@ Windowson, Linuxon, macOS-en és Androidon fut, egyetlen Rust kódbázisból ([e
 - [Fordítás forráskódból](#fordítás-forráskódból)
 - [Fejlesztés](#fejlesztés)
 - [Kiadás](#kiadás)
-- [Code signing policy](#code-signing-policy)
+- [Adatvédelem](#adatvédelem)
 - [Ami nem került bele](#ami-nem-került-bele)
 - [Köszönet](#köszönet)
 
@@ -48,6 +49,15 @@ Megjegyzések:
 - **macOS**: az alkalmazást az Apple nem hitelesítette (notarization), ezért az első indítást letiltja. Engedélyezd a *Rendszerbeállítások → Adatvédelem és biztonság → Megnyitás mindenképp* pontban, vagy futtasd ezt: `xattr -dr com.apple.quarantine /Applications/speci-local.app`.
 - **Linux**: OpenGL és a szokásos ablakkezelő könyvtárak kellenek hozzá (X11/Wayland, `libxkbcommon`), a Megnyitás/Mentés ablakokhoz pedig az `xdg-desktop-portal` (GNOME-on és KDE-n alapból megvan).
   Az első indítás telepít egy asztali bejegyzést (`~/.local/share/applications/speci-local.desktop`) és egy ikont (`~/.local/share/icons/hicolor/256x256/apps/speci-local.png`), így az alkalmazásnak lesz ikonja, és megjelenik az alkalmazásmenüben. Ha törlöd ezt a két fájlt, eltűnik onnan.
+
+## Víruskereső-figyelmeztetések
+
+A kiadott programok nincsenek digitálisan aláírva, ezért a Windows SmartScreen vagy egy víruskereső figyelmeztethet miattuk, akár karanténba is teheti őket.
+Ez a még kevesek által letöltött, aláíratlan kis programoknál gyakori, és nem azt jelenti, hogy bármi ártalmasat találtak bennük.
+Windowson a *További információ → Futtatás mindenképp* indítja el az alkalmazást.
+
+Minden kiadást a [Release workflow](.github/workflows/release.yml) épít ebből a repóból, a GitHub saját gépein.
+Ha így sem érzed biztonságosnak egy letöltött program futtatását, fordítsd le magad a forráskódból: lásd [Fordítás forráskódból](#fordítás-forráskódból). Néhány percig tart, és ugyanazt az alkalmazást kapod.
 
 ## Gyors kezdés
 
@@ -81,6 +91,13 @@ Megjegyzések:
 5. Nyomd meg a **Run tests** gombot: a struktogram lefut ugyanazon a teszteseten, és saját zöld jelet kap.
 
 ## Újdonságok (v1.0)
+
+A v1.0.1-ben:
+
+- A beállítások menü **Open in web editor** és **Copy web editor link** pontja megnyitja az aktuális specifikációt vagy struktogramokat az ELTE webes szerkesztőjében; a beillesztés a specifikációszerkesztő `?data=` linkjeit is beolvassa.
+- Hiba, ha egy függvény törzse több eredményt adó tétel (például `f:N->N, f(i)=FELTMAX(…)`), ahogy a webes szerkesztőben is; vegyél ki belőle egy részt `.3`-mal, vagy sorold fel az összes részt az értékkészletben.
+- Stuki: a mozgatás és a törlés gombja blokkmagasságú négyzet, a „+” csempe kör, az üres utasítás (`-`) pedig már nem húzható ki a ciklusokból és az elágazásokból.
+- Az első indításkor az alkalmazás felajánlja, hogy felveszi magát az alkalmazásmenübe (Linux) vagy a Start menübe (Windows).
 
 A legutóbbi verzió (v0.8.0) óta megjelent főbb fejlesztések:
 
@@ -177,9 +194,9 @@ A futás üzenettel megáll, ha egy szöveg nem olvasható lépésként, egy vá
 
 Fájlt a Ctrl+O-val, az ablakra húzva, vagy a parancssorból (`speci-local fajl.sp`) lehet megnyitni. Kilépéskor a munkamenet automatikusan mentődik.
 
-### `.sp`: specifikáció a teszteseteivel
+### `.sp`: az egész projekt egy fájlban
 
-A `.sp` fájl egyszerű szöveg: a specifikáció, amelyben minden teszteset megjegyzésként szerepel.
+Egy projekt egyetlen `.sp` fájl: a specifikáció, a tesztesetei és a Stuki fül struktogramjai. A mentés, a megnyitás és az új projekt mindhármon egyszerre dolgozik, bármelyik fülről. A fájl egyszerű szöveg: a specifikáció, amelyben minden teszteset és a struktogramok megjegyzésként szerepelnek.
 
 ```text
 // title: Páratlan számok
@@ -192,21 +209,30 @@ n: 5
 szamok: [3, 72, 81, 4, 5]
 db: 3
 ---*/
+
+/*--- stuki ---
+{
+  "nodes": { … },
+  "structograms": [ … ],
+  …
+}
+---*/
 ```
 
-Mivel a tesztesetek megjegyzések, az egész fájl továbbra is érvényes specifikáció. Változtatás nélkül beilleszthető az ELTE szerkesztőjébe.
+Mivel a tesztesetek és a struktogramok megjegyzések, az egész fájl továbbra is érvényes specifikáció. Változtatás nélkül beilleszthető az ELTE szerkesztőjébe. A struktogramok a webes Stuki JSON-jában vannak (lásd lent). Ha a Stuki fülhöz nem nyúltál, a fájlban nincs `stuki` blokk.
 
 A feladatáról elnevezett fájl követi a feladatot: ha átnevezed a feladatot és mentesz, a fájl is az új nevet kapja (kivéve, ha már van ilyen nevű fájl).
 
-### `.st`: struktogramok
+### `.st`: struktogramok a webes Stukiból
 
-A `.st` fájl a webalkalmazás saját állapota JSON-ban (az általa tárolt `nodes` és `structograms`, valamint a színpaletták), így ugyanazok az adatok mozognak a kettő között. A színes szöveg a webalkalmazás által használt HTML-ként marad meg (`<span style="color: rgb(255, 0, 0);">…</span>`).
+Egy `.st` fájl megnyitása (vagy az ablakra húzása) a struktogramjait beolvassa az aktuális projektbe, a meglévők helyére; a Stuki fülön a Ctrl+Z visszahozza a korábbiakat, a következő mentés pedig a `.sp` fájlba írja őket. A `.st` fájl a webalkalmazás saját állapota JSON-ban (az általa tárolt `nodes` és `structograms`, valamint a színpaletták), így ugyanazok az adatok mozognak a kettő között. A színes szöveg a webalkalmazás által használt HTML-ként marad meg (`<span style="color: rgb(255, 0, 0);">…</span>`).
 
 ### Egy sor az egész projektre
 
-- A Specification fülön a másolás gomb (Ctrl+Shift+C) a specifikációt és az összes tesztesetet egyetlen tömörített sorként, `SPECI1:…` alakban teszi a vágólapra. Csetben könnyű elküldeni.
-- A Stuki fülön a **Copy as text**, a Ctrl+Shift+C vagy a Shift+kattintás a másolás gombra egy `STUKI1:…` sort másol.
-- A beillesztés (Ctrl+Shift+V) mindkét sort beolvassa, és a megfelelő fülön nyitja meg. Elfogad sima specifikációszöveget, `.st` fájl szövegét és a webalkalmazás megosztási linkjeit is (`…/stuki/v1/?data=…`).
+- A Specification fülön a másolás gomb (Ctrl+Shift+C) az egész projektet (a specifikációt, az összes tesztesetet és a struktogramokat) egyetlen tömörített sorként, `SPECI1:…` alakban teszi a vágólapra. Csetben könnyű elküldeni.
+- A Stuki fülön a **Copy as text**, a Ctrl+Shift+C vagy a Shift+kattintás a másolás gombra csak a struktogramokat másolja, egy `STUKI1:…` sorként.
+- A beállítások menü **Open in web editor** pontja az aktuális fül projektjét megnyitja az ELTE webes szerkesztőjében; a **Copy web editor link** a linket másolja. A webes szerkesztőnek nincs címe, ezért a specifikáció címe az első megjegyzéssorba kerül.
+- A beillesztés (Ctrl+Shift+V) mindkét sort beolvassa, és a megfelelő fülön nyitja meg: a `SPECI1:` sor az egész projektet lecseréli, a `STUKI1:` sor csak a struktogramokat (ezt a Ctrl+Z visszavonja). Elfogad sima specifikációszöveget, `.st` fájl szövegét és a webalkalmazások megosztási linkjeit is (`…/specifikacio/v1/?data=…`, `…/stuki/v1/?data=…`).
 - Ha a rendszer vágólapja nem olvasható, megnyílik egy mező, ahová Ctrl+V-vel be lehet illeszteni.
 
 ## Billentyűparancsok
@@ -215,7 +241,7 @@ macOS-en a Ctrl helyett ⌘, az Alt helyett ⌥ használandó.
 
 | Billentyű | Művelet |
 | --- | --- |
-| Ctrl+N / Ctrl+O | Új / megnyitás, az aktuális fülön |
+| Ctrl+N / Ctrl+O | Új projekt / projekt megnyitása |
 | Ctrl+S / Ctrl+Shift+S | Mentés / mentés másként |
 | Ctrl+Shift+C / Ctrl+Shift+V | Az egész projekt másolása / beillesztése egy sorként |
 | Ctrl+Enter | A specifikáció kiértékelése |
@@ -237,19 +263,66 @@ Keskeny képernyőn (telefonon, vagy keskeny ablakban asztali gépen) egyszerre 
 
 ## Fordítás forráskódból
 
-Egy [Rust eszközlánc](https://rustup.rs) kell hozzá (2024-es kiadás).
+Kell hozzá a [Rust](https://rustup.rs) (stabil, 2024-es kiadás) és a forráskód: vagy `git clone https://github.com/FCsab/speci-local`, vagy egy [kiadás](https://github.com/FCsab/speci-local/releases) *Source code (zip)* fájlja, kicsomagolva.
+A fordítási parancsokat a forráskód mappájában futtasd. Az első fordítás letölti a szükséges könyvtárakat, és néhány percig tart; a `cargo run --release` egy lépésben fordít és el is indítja az alkalmazást.
 
-```sh
-cargo run --release
-```
+### Windows
 
-Debianon vagy Ubuntun előbb telepítsd a fordításhoz szükséges csomagokat:
+1. Telepítsd a Rustot a [rustup-init.exe](https://rustup.rs) programmal (vagy: `winget install Rustlang.Rustup`). Amikor rákérdez, engedd, hogy a Visual Studio C++ fordítóeszközeit is telepítse: a Rustnak kell a linkerük.
+2. Nyiss egy új PowerShell-ablakot a forráskód mappájában, és fordíts:
 
-```sh
-sudo apt-get install libxkbcommon-dev libgtk-3-dev
-```
+   ```powershell
+   cargo build --release
+   ```
 
-macOS-en a `scripts/bundle-macos.sh` elkészíti a `speci-local.app`-ot (univerzális bináris Apple Siliconra és Intelre), és becsomagolja.
+3. A program: `target\release\speci-local.exe`.
+
+### Linux
+
+1. Telepíts egy C-fordítót és a könyvtárakat, amelyekre az ablak és a fájlválasztó ablakok épülnek:
+
+   ```sh
+   sudo apt-get install build-essential curl libxkbcommon-dev libgtk-3-dev   # Debian, Ubuntu
+   sudo dnf install gcc libxkbcommon-devel gtk3-devel                        # Fedora
+   sudo pacman -S base-devel libxkbcommon gtk3                               # Arch
+   ```
+
+2. Telepítsd a Rustot:
+
+   ```sh
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+3. Nyiss egy új terminált a forráskód mappájában, és fordíts:
+
+   ```sh
+   cargo build --release
+   ```
+
+4. A program: `target/release/speci-local`.
+
+### macOS
+
+1. Telepítsd az Apple parancssori eszközeit (fordító és linker):
+
+   ```sh
+   xcode-select --install
+   ```
+
+2. Telepítsd a Rustot:
+
+   ```sh
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+3. Nyiss egy új terminált a forráskód mappájában, és fordíts:
+
+   ```sh
+   cargo build --release                # a program: target/release/speci-local
+   scripts/bundle-macos.sh              # vagy egy teljes alkalmazás: target/speci-local.app (és egy .zip belőle)
+   ```
+
+   A magad fordította alkalmazás nem kerül karanténba, így a macOS a *Megnyitás mindenképp* lépés nélkül elindítja.
 
 ### Nix
 
@@ -291,10 +364,10 @@ A CI minden pushnál lefuttatja mindhármat, megépíti az asztali alkalmazást 
 | `src/parser/` | a specifikációk lexere, blokkokra bontója, nyelvtana és statikus ellenőrzései |
 | `src/eval/` | a kiértékelő: értékek, műveletek, tételek, függvényhívások, a Stepper nyomkövetése |
 | `src/data.rs`, `src/runner.rs` | a YAML-tesztesetek beolvasása, futtatása és az ítélet magyarázata |
-| `src/file.rs`, `src/compact.rs` | `.sp` fájlok és a `SPECI1:` sor |
+| `src/file.rs`, `src/compact.rs` | `.sp` projektfájlok és a `SPECI1:` sor |
 | `src/editor/` | a kódszerkesztő: kiemelés, kiegészítés és Vim-billentyűk (`vim/`) |
 | `src/app/` | az ablak: eszköztár, panelek, eredmények, Stepper, párbeszédablakok, háttérben futó kiértékelés |
-| `src/stuki/` | a struktogramszerkesztő: modell, elrendezés, vászon, színek, PNG és `.st` fájlok |
+| `src/stuki/` | a struktogramszerkesztő: modell, elrendezés, vászon, színek, PNG és a webes Stuki JSON-ja (`.st` fájlok és a `.sp` fájlok `stuki` blokkja) |
 | `src/stuki/run/` | struktogramok futtatása teszteseteken: fordító és gép |
 | `src/platform.rs` | ami az asztali rendszerek és az Android között eltér |
 | `android/` | az androidos burok crate |
@@ -317,18 +390,9 @@ A workflow minden platformra megépíti az alkalmazást, lefuttatja a teszteket,
 
 Helyben frissülő APK-khoz add hozzá az `ANDROID_KEYSTORE` (egy `.jks` fájl base64 alakja) és az `ANDROID_KEYSTORE_PASSWORD` titkot a repóhoz. Ezek nélkül minden kiadást egy új, eldobható kulcs ír alá, így új verzió telepítése előtt a régit el kell távolítani.
 
-A Windows `.exe` aláírásához (lásd [Code signing policy](#code-signing-policy)) add hozzá a `SIGNPATH_API_TOKEN` titkot és a `SIGNPATH_ORGANIZATION_ID` változót a repóhoz. A SignPath-projekt neve `speci-local`, az aláírási szabályé `release-signing` legyen. Ezek nélkül az `.exe` aláíratlan marad. Az aláírási kérést a signpath.io-n kell jóváhagyni, amíg a workflow vár.
+## Adatvédelem
 
-## Code signing policy
-
-A Windows `.exe` alá van írva. Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
-
-- Committers and reviewers: [FCsab](https://github.com/FCsab)
-- Approvers: [FCsab](https://github.com/FCsab)
-
-Minden kiadást a Release workflow épít ebből a repóból a GitHub saját gépein, és minden aláírási kérést kézzel kell jóváhagyni.
-
-**Adatvédelem:** a program semmilyen adatot nem küld más hálózati rendszereknek, hacsak a felhasználó, illetve a telepítő vagy üzemeltető kifejezetten nem kéri. Az egyetlen kivétel a frissítésellenőrzés: induláskor az alkalmazás lekéri a GitHubtól (`api.github.com`) a legújabb kiadás számát, és mást nem küld. A frissítési ablak *Don't show again* gombjával kikapcsolható.
+Az alkalmazás semmit nem küld sehová, hacsak te nem kéred. Az egyetlen kivétel a frissítésellenőrzés: induláskor az alkalmazás lekéri a GitHubtól (`api.github.com`) a legújabb kiadás számát, és mást nem küld. A frissítési ablak *Don't show again* gombjával kikapcsolható.
 
 ## Ami nem került bele
 
