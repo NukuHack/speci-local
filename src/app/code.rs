@@ -7,7 +7,7 @@ use super::theme::{card, pane_title};
 use crate::csharp::{self, Inputs};
 use crate::editor::{Lang, code_editor, cursor_of};
 use crate::platform;
-use crate::ui::{ACCENT, I_CLOSE, I_RUN, I_WAND, I_WARN};
+use crate::ui::{ACCENT, GREEN, I_CLOSE, I_OK, I_RUN, I_WAND, I_WARN, RED};
 use eframe::egui::{self, Id, Margin, RichText};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -74,6 +74,10 @@ pub struct Code {
     /// (source, test case) the text was last made for.
     #[serde(skip)]
     key: Option<(Source, usize)>,
+    /// The expected output of the selected test case, for the specification and test it was
+    /// made from (the hash).
+    #[serde(skip)]
+    expected: Option<(u64, Result<String, String>)>,
 }
 
 /// A build-and-run in the background.
@@ -456,7 +460,8 @@ impl App {
                 .small()
                 .weak(),
         );
-        let h = (ui.available_height() - 34.0).max(40.0);
+        // the input and the expected output share the height
+        let h = ((ui.available_height() - 34.0) * 0.5).max(40.0);
         egui::ScrollArea::vertical()
             .id_salt("code-stdin")
             .max_height(h)
@@ -490,6 +495,45 @@ impl App {
                 }
             }
         });
+        // what the selected test case expects, to compare the run with
+        ui.add_space(2.0);
+        let verdict = self.code_verdict();
+        let expected = self.expected_output();
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("Expected output (test {})", self.current + 1))
+                    .small()
+                    .weak(),
+            );
+            match verdict {
+                Some(true) => {
+                    ui.label(
+                        RichText::new(format!("{I_OK} matches"))
+                            .small()
+                            .color(GREEN),
+                    );
+                }
+                Some(false) => {
+                    ui.label(
+                        RichText::new(format!("{I_WARN} differs"))
+                            .small()
+                            .color(RED),
+                    );
+                }
+                None => {}
+            }
+        });
+        egui::ScrollArea::vertical()
+            .id_salt("code-expected")
+            .auto_shrink([false, true])
+            .show(ui, |ui| match expected {
+                Ok(text) => {
+                    ui.add(egui::Label::new(RichText::new(text).monospace()).selectable(true));
+                }
+                Err(e) => {
+                    ui.label(RichText::new(e).small().weak());
+                }
+            });
     }
 
     fn code_fill_input(&mut self) {
@@ -506,6 +550,51 @@ impl App {
             Ok(text) => self.code.stdin = text,
             Err(e) => self.code.status = format!("No input from the test case: {e}"),
         }
+    }
+
+    /// What the console program prints for the selected test case.
+    pub(super) fn expected_output(&mut self) -> Result<String, String> {
+        use std::hash::{Hash, Hasher};
+        let test = self
+            .doc
+            .tests
+            .get(self.current)
+            .cloned()
+            .unwrap_or_default();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (&self.doc.spec, &test).hash(&mut h);
+        let key = h.finish();
+        if let Some((k, r)) = &self.code.expected
+            && *k == key
+        {
+            return r.clone();
+        }
+        let r = crate::parser::parse(&self.doc.spec)
+            .map_err(|d| format!("the specification has errors ({})", d[0].title))
+            .and_then(|s| csharp::console_output(&s, &test));
+        self.code.expected = Some((key, r.clone()));
+        r
+    }
+
+    /// Did the last run print the expected output? `None` while there is nothing to compare.
+    pub(super) fn code_verdict(&mut self) -> Option<bool> {
+        if self.code.source != Source::Console
+            || self.code.run.is_some()
+            || self.code.output.trim().is_empty()
+        {
+            return None;
+        }
+        // trailing spaces and empty lines at the end do not matter
+        let norm = |t: &str| {
+            t.lines()
+                .map(str::trim_end)
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim_end()
+                .to_string()
+        };
+        let expected = self.expected_output().ok()?;
+        Some(norm(&expected) == norm(&self.code.output))
     }
 
     /// One more line for the running program.

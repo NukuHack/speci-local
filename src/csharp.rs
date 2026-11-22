@@ -61,6 +61,22 @@ pub fn console_input(spec: &Spec, test: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// What the program of [`Inputs::Console`] prints for the test case `test`: the outputs in
+/// declaration order, one value per line, an array's elements each followed by a space.
+pub fn console_output(spec: &Spec, test: &str) -> Result<String, String> {
+    let env = data::load(spec, test).map_err(|d| d.title)?;
+    let mut g = Gen::new(spec);
+    let mut out = String::new();
+    for d in spec.decls.iter().filter(|d| d.role == Role::Out) {
+        let ty = g.ty_of(&d.ty);
+        match env.get(&d.name) {
+            Some(v) => g.output_lines(v, &ty, &mut out),
+            None => return Err(format!("The test case has no value for `{}`", d.name)),
+        }
+    }
+    Ok(out)
+}
+
 // ------------------------------------------------------------------------------ carbon
 
 /// Percent-encoding like JavaScript's `encodeURIComponent` (`strict`: `!*'()` too).
@@ -1038,6 +1054,59 @@ impl<'a> Gen<'a> {
         };
         out.retain(|(n, _)| !(counts.contains(n) && !assigned_names.contains(n)));
         out
+    }
+
+    /// How C# prints a value with `Console.Write`.
+    fn shown(v: &Value) -> String {
+        match v {
+            Value::Bool(true) => "True".into(),
+            Value::Bool(false) => "False".into(),
+            other => Self::plain(other),
+        }
+    }
+
+    fn shown_elem(&self, v: &Value, ty: &Ty) -> String {
+        match (v, ty) {
+            (Value::Rec(fs), Ty::Rec(n)) => self
+                .fields_of(n)
+                .iter()
+                .map(|(f, _)| {
+                    fs.iter()
+                        .find(|(x, _)| x == f)
+                        .map_or(String::new(), |(_, x)| Self::shown(x))
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => Self::shown(v),
+        }
+    }
+
+    /// The console text for one output (the counterpart of [`Gen::print_decl`]).
+    fn output_lines(&self, v: &Value, ty: &Ty, out: &mut String) {
+        match (v, ty) {
+            (Value::Arr { items, .. }, Ty::Arr { dims: 1, elem, .. }) => {
+                for it in items.iter() {
+                    out.push_str(&self.shown_elem(it, elem));
+                    out.push(' ');
+                }
+                out.push('\n');
+            }
+            (Value::Arr { items, .. }, Ty::Arr { dims: 2, elem, .. }) => {
+                for row in items.iter() {
+                    if let Value::Arr { items, .. } = row {
+                        for it in items.iter() {
+                            out.push_str(&self.shown_elem(it, elem));
+                            out.push(' ');
+                        }
+                    }
+                    out.push('\n');
+                }
+            }
+            _ => {
+                out.push_str(&self.shown_elem(v, ty));
+                out.push('\n');
+            }
+        }
     }
 
     // ------------------------------------------------------------------ output
@@ -2202,6 +2271,24 @@ class Program
             c.contains("int r = n;") && c.contains("int i = 0;") && c.contains("i = 1;"),
             "{c}"
         );
+    }
+
+    /// The expected output is what the console program prints (checked against dotnet's own
+    /// output of these programs).
+    #[test]
+    fn console_output_is_what_the_program_prints() {
+        for (name, expected) in [
+            ("count", "3\n"),
+            ("search", "2\n"),
+            ("search_none", "-1\n"),
+            ("max", "2\n9.25\n"),
+            ("select", "3\n3 7 2 \n"),
+            ("wind", "2\n"),
+        ] {
+            let (_, src, test) = cases().into_iter().find(|c| c.0 == name).unwrap();
+            let (spec, _) = build(src);
+            assert_eq!(console_output(&spec, test).unwrap(), expected, "{name}");
+        }
     }
 
     #[test]

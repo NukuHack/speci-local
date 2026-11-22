@@ -706,6 +706,15 @@ fn code_tab_writes_the_program_from_the_spec() {
     assert!(text.contains("Console.ReadLine()"), "{text}");
     assert!(!text.contains("{ 0, 3, 72"), "{text}");
     assert_eq!(h.state().code.stdin, "5\n3 72 81 4 5\n");
+    // the expected output is under the input, and follows the selected test case
+    assert_eq!(h.state_mut().expected_output(), Ok("3\n".to_string()));
+    // nothing was run yet, and a different output is told
+    assert_eq!(h.state_mut().code_verdict(), None);
+    h.state_mut().code.output = "4\n".into();
+    assert_eq!(h.state_mut().code_verdict(), Some(false));
+    h.state_mut().code.output = "3  \n\n".into(); // trailing blanks do not matter
+    assert_eq!(h.state_mut().code_verdict(), Some(true));
+    h.state_mut().code.output.clear();
 }
 
 /// Switching the mode rewrites only unedited code; From spec asks before replacing edits.
@@ -773,6 +782,8 @@ fn code_tab_runs_with_dotnet() {
         "{}",
         h.state().code.status
     );
+    // what the program printed is what the test case expects
+    assert_eq!(h.state_mut().code_verdict(), Some(true));
 
     // a compile error is shown with its line marked
     h.state_mut().code.text = h
