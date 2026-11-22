@@ -303,7 +303,7 @@ impl<'a> Gen<'a> {
             taken: HashSet::new(),
             fallback: "1001".into(),
             labels: false,
-            english: spec.pre_kw.eq_ignore_ascii_case("pre"),
+            english: spec.post_kw != "Uf:",
         };
         for d in &spec.decls {
             let ty = g.ty_of(&d.ty);
@@ -1815,6 +1815,7 @@ mod tests {
     const MAX: &str =
         "In:\nn∈N,\nx∈R[1..n]\nOut:\nind∈N,\nm∈R\nPre:\nn>0\nPost:\n(ind,m)=MAX(i=1..n, x[i])\n";
     const SELECT: &str = "Be:\nn∈N,\nt∈Z[1..n]\nKi:\ndb∈N,\ny∈Z[1..db]\nEf:\n-\nUf:\n(db,y)=KIVÁLOGAT(i=1..n, t[i]>0, t[i])\n";
+    const WIND: &str = "In: n∈Z, k∈N, szel∈N[1..n]\nAux: found∈L\nOut: nap∈Z\nFn: nicewind: N->L, nicewind(x) = FORALL(i=1..k, 10≤szel[i+x-1]≤100)\nPre: 1≤n≤1000 and 1≤k≤10 and ∀i∈[1..n]:(0≤szel[i]≤200)\nPost: (found, nap) = SEARCH(i=1..n-(k-1), nicewind(i)) and not(found) -> nap = -1\n";
     const FUNC: &str = "Be:\nn∈N,\nm∈N,\nt∈Z[1..n,1..m]\nKi:\nbest∈Z\nFv:\nsormax:N->Z,\nsormax(i)=MAX(j=1..m, t[i,j]).2\nEf:\nn>0 és m>0\nUf:\nbest=MAX(i=1..n, sormax(i)).2\n";
 
     /// (name, spec, test case)
@@ -1836,6 +1837,16 @@ mod tests {
                 "select",
                 SELECT,
                 "n: 5\nt: [3, -1, 0, 7, 2]\ndb: 3\ny: [3, 7, 2]\n",
+            ),
+            (
+                "wind",
+                WIND,
+                "n: 5\nk: 2\nszel: [5, 20, 30, 15, 200]\nfound: true\nnap: 2\n",
+            ),
+            (
+                "wind_none",
+                WIND,
+                "n: 1\nk: 1\nszel: [1]\nfound: false\nnap: -1\n",
             ),
             (
                 "func",

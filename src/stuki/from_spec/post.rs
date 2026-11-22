@@ -11,7 +11,7 @@ impl Gen<'_> {
                     .spec
                     .decl(n)
                     .is_some_and(|d| d.role != Role::In && d.init.is_none())
-                    && !self.assigned.contains(n) =>
+                    && (!self.assigned.contains(n) || self.reassign.get()) =>
             {
                 Some(n.clone())
             }
@@ -61,11 +61,18 @@ impl Gen<'_> {
     pub(super) fn sets_and_reads(&self, c: &Expr) -> (Vec<String>, Vec<String>) {
         if let ExprKind::Bin(BinOp::Imp, a, b) = &*c.kind {
             let (mut sets, mut reads) = (vec![], vec![]);
-            for p in conjuncts(a).into_iter().chain(conjuncts(b)) {
+            for p in conjuncts(a) {
                 let (s, r) = self.sets_and_reads(p);
                 sets.extend(s);
                 reads.extend(r);
             }
+            let outer = self.reassign.replace(true);
+            for p in conjuncts(b) {
+                let (s, r) = self.sets_and_reads(p);
+                sets.extend(s);
+                reads.extend(r);
+            }
+            self.reassign.set(outer);
             reads.retain(|r| !sets.contains(r));
             return (sets, reads);
         }
@@ -251,6 +258,9 @@ impl Gen<'_> {
         // each branch may set the same outputs, the else branch also what runs first
         // (`nem van -> m=0` after the FELTMAX above)
         let before = self.assigned.clone();
+        // the branches may give a value again to what the condition's own steps just computed
+        // (`(van,ind)=KERES(…) és nem van -> ind=-1`)
+        let outer = self.reassign.replace(true);
         for p in first {
             self.step(p, out);
         }
@@ -263,6 +273,7 @@ impl Gen<'_> {
         for p in otherwise.map(conjuncts).unwrap_or_default() {
             self.step(p, &mut no);
         }
+        self.reassign.set(outer);
         self.assigned.extend(set_in_yes);
         if conds.is_empty() {
             out.extend(yes);

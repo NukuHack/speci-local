@@ -355,9 +355,7 @@ fn general_sum_with_an_operator() {
         "== T\nvars i:Egész\nBe: n, t\ns:=igaz\n[while i=1..n]\n  s:=s és (t[i]>0)\nKi: s\n"
     );
     assert_eq!(
-        outline_of(
-            "In: n∈N, t∈Z[1..n]\nOut: s∈L\nPre: -\nPost: s=SUM(i=1..n, t[i]>0, false, or)"
-        ),
+        outline_of("In: n∈N, t∈Z[1..n]\nOut: s∈L\nPre: -\nPost: s=SUM(i=1..n, t[i]>0, false, or)"),
         "== T\nvars i:Integer\nIn: n, t\ns:=false\n[while i=1..n]\n  s:=s or (t[i]>0)\nOut: s\n"
     );
     // the start value is not 0 and not a condition
@@ -383,8 +381,12 @@ fn general_sum_with_a_function() {
 #[test]
 fn general_sum_needs_an_operation() {
     let err = |uf: &str| {
-        let src = format!("Be:\nn∈N,\nt∈Z[1..n]\nKi:\ns∈Z\nFv:\nf:Z->Z,\nf(a)=a\nEf:\n-\nUf:\n{uf}\n");
-        parse(&src).err().map(|e| e[0].title.clone()).unwrap_or_default()
+        let src =
+            format!("Be:\nn∈N,\nt∈Z[1..n]\nKi:\ns∈Z\nFv:\nf:Z->Z,\nf(a)=a\nEf:\n-\nUf:\n{uf}\n");
+        parse(&src)
+            .err()
+            .map(|e| e[0].title.clone())
+            .unwrap_or_default()
     };
     assert!(err("s=SZUMMA(i=1..n, t[i], 0, 5)").contains("operator"));
     assert!(err("s=SZUMMA(i=1..n, t[i], 0, nincs)").contains("nincs"));
@@ -403,4 +405,19 @@ fn a_pattern_written_twice_is_computed_once() {
         ),
         "{out}"
     );
+}
+
+const NICE_WIND: &str = "In: n∈Z, k∈N, szel∈N[1..n]\nAux: found∈L\nOut: nap∈Z\nFn: nicewind: N->L, nicewind(x) = FORALL(i=1..k, 10≤szel[i+x-1]≤100)\nPre: 1≤n≤1000 and 1≤k≤10 and ∀i∈[1..n]:(0≤szel[i]≤200)\nPost: (found, nap) = SEARCH(i=1..n-(k-1), nicewind(i)) and not(found) -> nap = -1\n";
+
+/// `… and not found -> nap=-1`: the implication gives `nap` a value again, as one decision.
+#[test]
+fn an_implication_may_reassign_what_the_condition_computed() {
+    let expected = "== T\nvars i:Integer\nIn: n, k, szel\ni:=1\n[while i≤n-(k-1) and not nicewind(i)]\n  i:=i+1\n\
+         found:=i≤n-(k-1)\n[if found]\n  nap:=i\n[if not(found)]\n  nap:=-1\nOut: nap\n";
+    let out = outline_of(NICE_WIND);
+    assert!(out.starts_with(expected), "{out}");
+    // the same with the implication as a part of its own
+    let own = NICE_WIND.replace("and not(found) -> nap = -1", "and (not(found) -> nap = -1)");
+    let out = outline_of(&own);
+    assert!(out.starts_with(expected), "{out}");
 }

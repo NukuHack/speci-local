@@ -128,6 +128,9 @@ struct Gen<'a> {
     assigned: HashSet<String>,
     /// Arrays given their value element by element (`y[1]=…`, `∀i∈[2..n]:(y[i]=…)`).
     elems: HashSet<String>,
+    /// Inside the consequent of an implication: `x=…` gives `x` a (new) value even when an
+    /// earlier part of the postcondition already did (`… és nem van -> ind=-1`).
+    reassign: std::cell::Cell<bool>,
     active: Vec<String>,
     renames: Vec<(String, String)>,
 }
@@ -139,6 +142,7 @@ pub fn from_spec(spec: &Spec, title: &str) -> Generated {
         taken: HashSet::new(),
         locals: vec![],
         assigned: HashSet::new(),
+        reassign: std::cell::Cell::new(false),
         elems: HashSet::new(),
         active: vec![],
         renames: vec![],
