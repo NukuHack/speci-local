@@ -192,6 +192,10 @@ pub fn from_spec(spec: &Spec, title: &str) -> Generated {
         let d = g.function(name, f);
         program.diagrams.push(d);
     }
+    // decisions that follow each other on one condition are one decision
+    for d in &mut program.diagrams {
+        super::merge::merge_ifs(&mut d.body);
+    }
     Generated { program, unset }
 }
 

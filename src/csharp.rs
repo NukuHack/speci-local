@@ -9,6 +9,7 @@
 use crate::data;
 use crate::eval::{Env, Value};
 use crate::parser::{BinOp, Expr, ExprKind, Fragment, Role, Spec, Type, parse_fragment, vars_in};
+use crate::stuki::merge::{Rel, relation};
 use crate::stuki::model::{Diagram, Kind, Node, Program};
 use crate::stuki::run::header;
 use std::collections::{HashMap, HashSet};
@@ -865,6 +866,47 @@ impl<'a> Gen<'a> {
                     }
                     out.push(Ir::Switch(cs));
                 }
+            }
+        }
+        self.merge_ir(out)
+    }
+
+    /// Decisions that follow each other on one condition (or on its opposite) become one:
+    /// `if (c) { A } if (!c) { B }` → `if (c) { A } else { B }`. Only when the first one leaves
+    /// what the condition reads alone.
+    fn merge_ir(&self, ir: Vec<Ir>) -> Vec<Ir> {
+        let mut out: Vec<Ir> = vec![];
+        for s in ir {
+            let rel = match (out.last(), &s) {
+                (Some(Ir::If(c1, y1, n1)), Ir::If(c2, ..)) => {
+                    let text = |e: &Expr| &self.src[e.start..e.end];
+                    let (mut assigned, mut counts) = (vec![], vec![]);
+                    Self::scan(y1, &mut assigned, &mut counts);
+                    Self::scan(n1, &mut assigned, &mut counts);
+                    let touched = vars_in(c1)
+                        .iter()
+                        .any(|v| counts.contains(v) || assigned.iter().any(|(a, _)| a == v));
+                    if touched {
+                        None
+                    } else {
+                        relation(text(c1), text(c2))
+                    }
+                }
+                _ => None,
+            };
+            match (rel, s) {
+                (Some(rel), Ir::If(_, y2, n2)) => {
+                    let Some(Ir::If(c1, y1, n1)) = out.pop() else {
+                        unreachable!()
+                    };
+                    let cat = |a: Vec<Ir>, b: Vec<Ir>| a.into_iter().chain(b).collect::<Vec<_>>();
+                    let (y, n) = match rel {
+                        Rel::Same => (cat(y1, y2), cat(n1, n2)),
+                        Rel::Opposite => (cat(y1, n2), cat(n1, y2)),
+                    };
+                    out.push(Ir::If(c1, self.merge_ir(y), self.merge_ir(n)));
+                }
+                (_, s) => out.push(s),
             }
         }
         out
@@ -1925,6 +1967,58 @@ class Program
 }
 "
         );
+    }
+
+    /// A hand-drawn structogram with decisions that follow each other: one `if`/`else`.
+    #[test]
+    fn adjacent_decisions_become_one_if_else() {
+        use crate::stuki::model::{Diagram, Kind, Node, fresh_id};
+        use crate::stuki::rich::Rich;
+        let stmt = |t: &str| Node {
+            id: fresh_id(),
+            bg: None,
+            kind: Kind::Statement(Rich::plain(t)),
+        };
+        let decision = |c: &str, y: Vec<Node>| Node {
+            id: fresh_id(),
+            bg: None,
+            kind: Kind::If {
+                cond: Rich::plain(c),
+                yes: y,
+                no: vec![Node::noop()],
+            },
+        };
+        let spec = parse("In: n∈Z\nOut: r∈Z, s∈Z\nPre: -\nPost: r = n and s = n\n").unwrap();
+        let build = |body: Vec<Node>| {
+            let mut d = Diagram::new();
+            d.body = body;
+            Program {
+                diagrams: vec![d],
+                ..Program::default()
+            }
+        };
+        let code = |p: &Program| {
+            generate(&spec, p, Inputs::Test, "n: 1\nr: 1\ns: 1\n")
+                .unwrap()
+                .code
+        };
+        // opposite conditions
+        let p = build(vec![
+            decision("n>0", vec![stmt("r:=1")]),
+            decision("n≤0", vec![stmt("r:=2")]),
+        ]);
+        let text = code(&p);
+        assert_eq!(text.matches("if (").count(), 1, "{text}");
+        assert!(
+            text.contains("if (n > 0)") && text.contains("else"),
+            "{text}"
+        );
+        // the first decision changes what the condition reads: they stay two
+        let p = build(vec![
+            decision("r>0", vec![stmt("r:=0")]),
+            decision("r≤0", vec![stmt("s:=1")]),
+        ]);
+        assert_eq!(code(&p).matches("if (").count(), 2);
     }
 
     #[test]

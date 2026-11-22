@@ -156,7 +156,7 @@ fn implications_become_one_decision() {
     assert_eq!(
         out,
         "== T\nvars i:Egész\nBe: n, ar, k\ni:=1\n[while i≤n és nem (ar[i]<k)]\n  i:=i+1\nvan:=i≤n\n\
-         [if van]\n  ind:=i\n[if van]\n  sorszam:=ind\n[else]\n  sorszam:=-1\nKi: sorszam\n"
+         [if van]\n  ind:=i\n  sorszam:=ind\n[else]\n  sorszam:=-1\nKi: sorszam\n"
     );
     // a search inside the condition comes first; the rest of the condition decides
     let out = outline_of(
@@ -164,7 +164,7 @@ fn implications_become_one_decision() {
          (van,ind)=SEARCH(i=1..n-1, x[i]<x[i+1]) and\n      van -> lib=x[ind]\n",
     );
     assert!(
-        out.ends_with("[if van]\n  ind:=i\n[if van]\n  lib:=x[ind]\nOut: lib\n"),
+        out.ends_with("[if van]\n  ind:=i\n  lib:=x[ind]\nOut: lib\n"),
         "{out}"
     );
 }
@@ -413,7 +413,7 @@ const NICE_WIND: &str = "In: n∈Z, k∈N, szel∈N[1..n]\nAux: found∈L\nOut: 
 #[test]
 fn an_implication_may_reassign_what_the_condition_computed() {
     let expected = "== T\nvars i:Integer\nIn: n, k, szel\ni:=1\n[while i≤n-(k-1) and not nicewind(i)]\n  i:=i+1\n\
-         found:=i≤n-(k-1)\n[if found]\n  nap:=i\n[if not(found)]\n  nap:=-1\nOut: nap\n";
+         found:=i≤n-(k-1)\n[if found]\n  nap:=i\n[else]\n  nap:=-1\nOut: nap\n";
     let out = outline_of(NICE_WIND);
     assert!(out.starts_with(expected), "{out}");
     // the same with the implication as a part of its own
