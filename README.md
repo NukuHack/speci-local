@@ -199,6 +199,9 @@ A harmadik, **C# Code** fül egyetlen C# szerkesztő. Szintaxiskiemelése, behú
 - **Test values / Console**: *Test values* esetén a kiválasztott teszteset bemenő értékei a programba vannak írva, és a program kiírja az eredményeket (`db = 3`). *Console* esetén a program a konzolról olvas (egy skalár soronként, egy tömb soronként), és csak az értékeket írja ki. A kapcsoló átírja a programot, ha nem módosítottad; a *Fill from test case* a teszteset bemenetét a megfelelő formában a bemeneti mezőbe írja.
 - **Run** (Ctrl+Enter): a `PATH`-on lévő `dotnet`-tel lefordítja és lefuttatja a programot (Linuxon, Windowson, macOS-en), a háttérben, **Stop** gombbal megállítható. A fordítási hibák a Output panelben jelennek meg, a hibás sorok pirosan kiemelve. A cél keretrendszert a telepített SDK határozza meg. Telefonon a futtatás nem érhető el.
 - A generált program alapból **nem kezel kivételt és nem ellenőriz bemenetet**; ha ilyet szeretnél, add hozzá kézzel.
+- **Mentés**: a C# program a projekt `.sp` fájljába is bekerül, a Stuki blokk alá egy `/*--- code ---` megjegyzésblokkba (a fájl így is érvényes specifikáció marad). Megnyitáskor visszaolvassa; ami fájlból jött, azt a *From spec + stuki* soha nem írja felül megkérdezés nélkül. A C# saját `*/` jele a blokkban `*\/`-ként van elmentve, és visszaolvasáskor eredetire áll vissza.
+- **Carbon**: a beállítások menüben (⚙) a Code fülön az *Open in Carbon* és a *Copy Carbon link* a programot a carbon.now.sh-ra viszi, hogy képet készíthess belőle.
+- A generált kód a változót az első értékadásával együtt deklarálja (`int i = 1;`), a mezőket kezdőérték nélkül (a tömböket a `Main` hozza létre), csak a `string` mezőnek van `= ""`.
 
 ## Fájlok és megosztás
 

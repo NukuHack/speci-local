@@ -1,6 +1,6 @@
-//! `.sp` files: a whole project in one file. The specification is plain text; the test cases
-//! and the structograms (the web Stuki's JSON, see [`crate::stuki::format`]) are embedded as
-//! block comments, so the whole file is still a valid specification and can be pasted into the
+//! `.sp` files: a whole project in one file. The specification is plain text; the test cases,
+//! the structograms (the web Stuki's JSON, see [`crate::stuki::format`]) and the C# program of
+//! the Code tab are embedded as block comments, so the whole file is still a valid specification and can be pasted into the
 //! ELTE editor as-is.
 //!
 //! ```text
@@ -14,6 +14,11 @@
 //!
 //! /*--- stuki ---
 //! { "nodes": { ... }, "structograms": [ ... ], ... }
+//! ---*/
+//!
+//! /*--- code ---
+//! using System;
+//! ...
 //! ---*/
 //! ```
 
@@ -34,11 +39,14 @@ pub struct Project {
     pub doc: Doc,
     /// `None`: the project has no structograms of its own (the file has no Stuki block).
     pub stuki: Option<Program>,
+    /// The C# program of the Code tab; `None`: the file has none.
+    pub code: Option<String>,
 }
 
 const TITLE: &str = "// title: ";
 const OPEN: &str = "/*--- test ---\n";
 const STUKI_OPEN: &str = "/*--- stuki ---\n";
+const CODE_OPEN: &str = "/*--- code ---\n";
 const CLOSE: &str = "---*/";
 
 pub fn to_sp(doc: &Doc) -> String {
@@ -57,13 +65,67 @@ pub fn to_sp(doc: &Doc) -> String {
 }
 
 /// The whole project as a `.sp` file. Untouched structograms (the empty "Main" every project
-/// starts with) are left out, so a project without structograms is a plain `.sp` file.
-pub fn to_project(doc: &Doc, stuki: &Program) -> String {
+/// starts with) and an empty program are left out, so a project without them is a plain
+/// `.sp` file.
+pub fn to_project(doc: &Doc, stuki: &Program, code: &str) -> String {
     let mut out = to_sp(doc);
     if !stuki.content_is(&Program::default().content()) {
         // `*` only occurs inside JSON strings, where `\/` is the same as `/`
         let json = stuki_format::to_st(stuki).replace("*/", "*\\/");
         out.push_str(&format!("\n{STUKI_OPEN}{}\n{CLOSE}\n", json.trim_end()));
+    }
+    if !code.trim().is_empty() {
+        out.push_str(&format!(
+            "\n{CODE_OPEN}{}\n{CLOSE}\n",
+            escape_code(code.trim_end())
+        ));
+    }
+    out
+}
+
+/// `code` where it can't end the comment: a `*/` (with any backslashes between the two) gets
+/// one more backslash, so `*/` is written `*\/` and `*\/` is written `*\\/`.
+fn escape_code(code: &str) -> String {
+    let cs: Vec<char> = code.chars().collect();
+    let mut out = String::with_capacity(code.len() + 8);
+    let mut i = 0;
+    while i < cs.len() {
+        out.push(cs[i]);
+        if cs[i] == '*' {
+            let mut j = i + 1;
+            while cs.get(j) == Some(&'\\') {
+                j += 1;
+            }
+            if cs.get(j) == Some(&'/') {
+                out.extend(std::iter::repeat_n('\\', j - i));
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The opposite of [`escape_code`].
+fn unescape_code(text: &str) -> String {
+    let cs: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < cs.len() {
+        out.push(cs[i]);
+        if cs[i] == '*' {
+            let mut j = i + 1;
+            while cs.get(j) == Some(&'\\') {
+                j += 1;
+            }
+            if cs.get(j) == Some(&'/') && j > i + 1 {
+                out.extend(std::iter::repeat_n('\\', j - i - 2));
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
     }
     out
 }
@@ -71,7 +133,7 @@ pub fn to_project(doc: &Doc, stuki: &Program) -> String {
 /// Read a `.sp` file. A damaged Stuki block is an error; the specification and test cases are
 /// still in [`from_sp`].
 pub fn from_project(text: &str) -> Result<Project, String> {
-    let (doc, stuki) = split(text);
+    let (doc, stuki, code) = split(text);
     let stuki = match stuki {
         Some(json) => Some(
             stuki_format::from_st(&json)
@@ -79,7 +141,12 @@ pub fn from_project(text: &str) -> Result<Project, String> {
         ),
         None => None,
     };
-    Ok(Project { doc, stuki })
+    Ok(Project { doc, stuki, code })
+}
+
+/// The C# program of a `.sp` file, if it has one.
+pub fn code_of(text: &str) -> Option<String> {
+    split(text).2
 }
 
 /// The specification and test cases of a `.sp` file (its structograms left out).
@@ -87,8 +154,8 @@ pub fn from_sp(text: &str) -> Doc {
     split(text).0
 }
 
-/// The specification and test cases, and the Stuki block's JSON.
-fn split(text: &str) -> (Doc, Option<String>) {
+/// The specification and test cases, the Stuki block's JSON and the C# program.
+fn split(text: &str) -> (Doc, Option<String>, Option<String>) {
     // Windows editors may add a byte-order mark and CRLF line endings
     let text = text.trim_start_matches('\u{feff}').replace("\r\n", "\n");
     let mut rest = text.as_str();
@@ -101,9 +168,10 @@ fn split(text: &str) -> (Doc, Option<String>) {
     let mut spec = String::new();
     let mut tests = Vec::new();
     let mut stuki = None;
-    // the next test or Stuki block, whichever comes first
+    let mut code = None;
+    // the next test, Stuki or code block, whichever comes first
     let next = |rest: &str| {
-        [OPEN, STUKI_OPEN]
+        [OPEN, STUKI_OPEN, CODE_OPEN]
             .into_iter()
             .filter_map(|open| Some((rest.find(open)?, open)))
             .min()
@@ -115,6 +183,8 @@ fn split(text: &str) -> (Doc, Option<String>) {
         let body = after[..end].trim_end();
         if open == OPEN {
             tests.push(format!("{body}\n"));
+        } else if open == CODE_OPEN {
+            code = Some(format!("{}\n", unescape_code(body)));
         } else {
             stuki = Some(body.to_string());
         }
@@ -129,7 +199,7 @@ fn split(text: &str) -> (Doc, Option<String>) {
         spec: format!("{}\n", spec.trim_end()),
         tests,
     };
-    (doc, stuki)
+    (doc, stuki, code)
 }
 
 // ---------------------------------------------------------------- clipboard
@@ -139,7 +209,7 @@ pub const COMPACT_PREFIX: &str = "SPECI1:";
 
 /// The whole project as one short line: `SPECI1:` + base64url(deflate(.sp text)).
 pub fn to_compact(doc: &Doc, stuki: &Program) -> String {
-    compact::pack(COMPACT_PREFIX, &to_project(doc, stuki))
+    compact::pack(COMPACT_PREFIX, &to_project(doc, stuki, ""))
 }
 
 /// A link that opens the project in the ELTE specification editor. The web app keeps no title,
@@ -170,7 +240,11 @@ pub fn from_clipboard(text: &str) -> Result<Project, String> {
     // a specification may well say `data=`, so only links to the web editor count
     if t.contains("/specifikacio") {
         if let Some(json) = compact::web_link_json(t) {
-            return from_web_json(&json?).map(|doc| Project { doc, stuki: None });
+            return from_web_json(&json?).map(|doc| Project {
+                doc,
+                stuki: None,
+                code: None,
+            });
         }
         if t.contains("uuid=") {
             return Err("This link points to a specification saved on the university server, which can't be read without logging in. Open it in the web editor and share it from there (a link with data=).".into());
@@ -362,14 +436,14 @@ mod tests {
             tests: vec!["n: 1\ns: 1\n".into(), "n: 2\n".into()],
         };
         // the empty structogram every project starts with is not written
-        let plain = to_project(&doc, &Program::default());
+        let plain = to_project(&doc, &Program::default(), "");
         assert_eq!(plain, to_sp(&doc));
         assert!(from_project(&plain).unwrap().stuki.is_none());
 
         let mut stuki = Program::default();
         stuki.diagrams[0].name = Rich::plain("Összeg");
         stuki.diagrams[0].variables = Rich::plain("a*/b"); // can't close the comment
-        let text = to_project(&doc, &stuki);
+        let text = to_project(&doc, &stuki, "");
         assert_eq!(text.matches("*/").count(), 3, "{text}");
         assert!(text.ends_with("\n---*/\n"));
         let back = from_project(&text).unwrap();
@@ -390,5 +464,47 @@ mod tests {
         let e = from_project(&damaged).unwrap_err();
         assert!(e.contains("structograms"), "{e}");
         assert_eq!(from_sp(&damaged), doc);
+    }
+
+    /// The C# program is saved in a block of its own, whatever it contains.
+    #[test]
+    fn the_program_has_a_block_of_its_own() {
+        use crate::stuki::rich::Rich;
+        let doc = Doc {
+            title: "T".into(),
+            spec: "Be: n∈N\nKi: s∈N\nEf: -\nUf: s=n\n".into(),
+            tests: vec!["n: 1\ns: 1\n".into()],
+        };
+        // C# comments, and the ways a `*/` could hide in the text
+        let code = "using System;\n/* note */ class P { string s = \"*\\/\"; /* a *\\/ b */ }\n// ---*/\n    int x = 2 */ 3; *\\\\/\n";
+        let text = to_project(&doc, &Program::default(), code);
+        assert_eq!(text.matches("*/").count(), 2, "{text}"); // the ends of the test and code blocks only
+        assert_eq!(
+            from_project(&text).unwrap().code.as_deref(),
+            Some(code),
+            "{text}"
+        );
+        // the spec and tests are untouched, and it is still a valid specification
+        assert_eq!(from_sp(&text), doc);
+        assert!(crate::parse(&text).is_ok());
+        assert!(from_project(&text).unwrap().stuki.is_none());
+        // nothing to save: a plain file
+        assert_eq!(to_project(&doc, &Program::default(), "  \n"), to_sp(&doc));
+        assert_eq!(code_of(&to_sp(&doc)), None);
+        // with structograms too, and Windows line endings
+        let mut stuki = Program::default();
+        stuki.diagrams[0].name = Rich::plain("Összeg");
+        let both = to_project(&doc, &stuki, code);
+        let back = from_project(&both.replace('\n', "\r\n")).unwrap();
+        assert_eq!(back.code.as_deref(), Some(code));
+        assert_eq!(back.stuki.unwrap().content(), stuki.content());
+        assert_eq!(code_of(&both).as_deref(), Some(code));
+        // the clipboard line is for sharing: it stays without the program
+        assert!(
+            from_clipboard(&to_compact(&doc, &stuki))
+                .unwrap()
+                .code
+                .is_none()
+        );
     }
 }

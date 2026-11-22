@@ -790,3 +790,47 @@ fn code_tab_runs_with_dotnet() {
     );
     assert!(!h.state().code.errors.is_empty());
 }
+
+/// The program is saved in the project file, read back, and counts as a change until then.
+#[test]
+fn the_program_is_saved_with_the_project_and_read_back() {
+    let dir = TempDir::new("code-file");
+    let path = dir.0.join("p.sp");
+    let mut h = code_harness();
+    // the first visit writes the program, which is not a change of the project
+    assert!(h.state().code.text.contains("class Program"));
+    assert!(!h.state().code.dirty());
+    h.state_mut().code.text.push_str("// mine /* x */\n");
+    assert!(h.state().code.dirty());
+    assert!(h.state().dirty());
+    h.state_mut().save_to(path.clone());
+    assert!(!h.state().code.dirty());
+    let file = std::fs::read_to_string(&path).unwrap();
+    assert!(file.contains("/*--- code ---\nusing System;"), "{file}");
+    assert!(file.contains("// mine /* x *\\/"), "{file}");
+
+    // opened in another window: the same program, nothing to save
+    let saved = h.state().code.text.clone();
+    let mut h2 = harness([1360.0, 900.0]);
+    h2.state_mut().load(&path);
+    assert_eq!(h2.state().code.text, saved);
+    assert!(!h2.state().code.dirty());
+    // it was edited, so converting again asks first
+    assert!(h2.state().code.text != h2.state().code.generated);
+
+    // a file without a program: the editor is empty and is filled on the first visit
+    h2.state_mut().code.text.clear();
+    h2.state_mut().code.mark_saved();
+    let bare = dir.0.join("bare.sp");
+    h2.state_mut().save_to(bare.clone());
+    assert!(
+        !std::fs::read_to_string(&bare)
+            .unwrap()
+            .contains("--- code ---")
+    );
+    h.state_mut().load(&bare);
+    assert!(h.state().code.text.is_empty());
+    h.run_steps(4);
+    assert!(h.state().code.text.contains("class Program"));
+    assert!(!h.state().code.dirty());
+}

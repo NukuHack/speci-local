@@ -3,7 +3,9 @@
 
 use super::{App, Replace, Tab, Tool};
 use crate::editor::Completion;
-use crate::file::{Doc, Project, from_clipboard, from_project, from_sp, to_compact, to_project};
+use crate::file::{
+    Doc, Project, code_of, from_clipboard, from_project, from_sp, to_compact, to_project,
+};
 use crate::platform::{self, FileKind};
 use crate::stuki::{self, model::Program};
 use crate::ui;
@@ -21,7 +23,7 @@ fn blank() -> Doc {
 impl App {
     /// Unsaved changes anywhere in the project: specification, test cases or structograms.
     pub(super) fn dirty(&self) -> bool {
-        self.doc != self.saved || self.stuki.dirty()
+        self.doc != self.saved || self.stuki.dirty() || self.code.dirty()
     }
 
     pub(super) fn file_new(&mut self) {
@@ -61,6 +63,7 @@ impl App {
             Replace::New => {
                 self.reset_doc(blank(), None);
                 self.stuki.reset(Program::default(), true);
+                self.reset_code(None);
                 self.tab = Tab::Spec;
                 self.stuki.status = "New project".into();
                 self.status = "New project".into();
@@ -80,6 +83,7 @@ impl App {
                 self.reset_doc(project.doc, None);
                 self.saved = Doc::default(); // imported, not saved anywhere yet
                 self.stuki.reset(project.stuki.unwrap_or_default(), false);
+                self.reset_code(project.code);
                 self.tab = Tab::Spec;
                 self.status = "Project read from the clipboard (not saved to a file yet)".into();
                 self.stuki.status = self.status.clone();
@@ -121,7 +125,15 @@ impl App {
             Ok(p) => (p, None),
             Err(e) => {
                 let doc = from_sp(&text);
-                (Project { doc, stuki: None }, Some(e))
+                let code = code_of(&text);
+                (
+                    Project {
+                        doc,
+                        stuki: None,
+                        code,
+                    },
+                    Some(e),
+                )
             }
         };
         let mut doc = project.doc;
@@ -135,6 +147,7 @@ impl App {
         // structograms that can't be read are not on screen: saving would leave them out
         self.stuki
             .reset(project.stuki.unwrap_or_default(), problem.is_none());
+        self.reset_code(project.code);
         self.status = match problem {
             Some(e) => format!("Opened {}, but {e}", path.display()),
             None => format!("Opened {}", path.display()),
@@ -184,12 +197,13 @@ impl App {
     /// Write the whole project (specification, test cases and structograms) into one `.sp` file.
     pub(super) fn save_to(&mut self, path: PathBuf) {
         let path = FileKind::Spec.with_ext(path);
-        let text = to_project(&self.doc, &self.stuki.program);
+        let text = to_project(&self.doc, &self.stuki.program, &self.code.text);
         match platform::write_file(&path, text.as_bytes()) {
             Ok(()) => {
                 self.status = format!("Saved {}", path.display());
                 self.saved = self.doc.clone();
                 self.stuki.mark_saved();
+                self.code.mark_saved();
                 self.path = Some(path);
             }
             Err(e) => self.status = format!("Could not save {}: {e}", path.display()),
@@ -210,7 +224,11 @@ impl App {
     /// Opens the current tab's project in the ELTE web editor.
     pub(super) fn open_in_web_editor(&mut self, ctx: &egui::Context) {
         ctx.open_url(egui::OpenUrl::new_tab(self.web_link()));
-        let msg = "Opened the project in the web editor".to_string();
+        let msg = match self.tool {
+            Tool::Code => "Opened the program in Carbon",
+            _ => "Opened the project in the web editor",
+        }
+        .to_string();
         match self.tool {
             Tool::Spec => self.status = msg,
             Tool::Stuki => self.stuki.status = msg,
@@ -221,7 +239,11 @@ impl App {
     /// Copies a link that opens the current tab's project in the ELTE web editor.
     pub(super) fn copy_web_link(&mut self, ctx: &egui::Context) {
         ctx.copy_text(self.web_link());
-        let msg = "Copied a link that opens the project in the web editor".to_string();
+        let msg = match self.tool {
+            Tool::Code => "Copied a Carbon link that shows the program as an image",
+            _ => "Copied a link that opens the project in the web editor",
+        }
+        .to_string();
         match self.tool {
             Tool::Spec => self.status = msg,
             Tool::Stuki => self.stuki.status = msg,
@@ -231,7 +253,8 @@ impl App {
 
     fn web_link(&self) -> String {
         match self.tool {
-            Tool::Spec | Tool::Code => crate::file::to_web_link(&self.doc),
+            Tool::Spec => crate::file::to_web_link(&self.doc),
+            Tool::Code => crate::csharp::carbon_link(&self.code.text),
             Tool::Stuki => stuki::format::to_web_link(&self.stuki.program),
         }
     }

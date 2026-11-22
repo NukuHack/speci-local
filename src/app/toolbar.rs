@@ -96,17 +96,34 @@ impl App {
                 ui.close();
             }
             ui.separator();
+            let code = self.tool == Tool::Code;
             if ui
-                .button("Open in web editor")
-                .on_hover_text("Open this project in the ELTE web editor (progalap.elte.hu)")
+                .button(if code {
+                    "Open in Carbon"
+                } else {
+                    "Open in web editor"
+                })
+                .on_hover_text(if code {
+                    "Open the C# program in carbon.now.sh, to make an image of it"
+                } else {
+                    "Open this project in the ELTE web editor (progalap.elte.hu)"
+                })
                 .clicked()
             {
                 self.open_in_web_editor(ui.ctx());
                 ui.close();
             }
             if ui
-                .button("Copy web editor link")
-                .on_hover_text("Copy a link that opens this project in the ELTE web editor")
+                .button(if code {
+                    "Copy Carbon link"
+                } else {
+                    "Copy web editor link"
+                })
+                .on_hover_text(if code {
+                    "Copy a link that opens the C# program in carbon.now.sh"
+                } else {
+                    "Copy a link that opens this project in the ELTE web editor"
+                })
                 .clicked()
             {
                 self.copy_web_link(ui.ctx());

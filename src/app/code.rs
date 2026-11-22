@@ -42,9 +42,11 @@ pub struct Code {
     pub text: String,
     pub source: Source,
     /// What the last conversion wrote: the text is "unedited" while it still equals this.
-    generated: String,
+    pub(super) generated: String,
     /// The text the program reads in the console mode.
     pub stdin: String,
+    /// The program as it is in the saved file.
+    saved: String,
     #[serde(skip)]
     pub output: String,
     #[serde(skip)]
@@ -95,7 +97,35 @@ fn code_editor_id() -> Id {
     Id::unique("code-editor")
 }
 
+impl Code {
+    /// Changed since the file was saved or opened?
+    pub(super) fn dirty(&self) -> bool {
+        self.text != self.saved
+    }
+
+    pub(super) fn mark_saved(&mut self) {
+        self.saved = self.text.clone();
+    }
+}
+
 impl App {
+    /// Puts the program of a project that was opened (or a new one) in the editor. A program
+    /// that came from a file counts as edited: it is never replaced without asking.
+    pub(super) fn reset_code(&mut self, text: Option<String>) {
+        self.code_stop();
+        let text = text.unwrap_or_default();
+        self.code.saved = text.clone();
+        self.code.text = text;
+        self.code.generated.clear();
+        self.code.output.clear();
+        self.code.errors.clear();
+        self.code.notes.clear();
+        self.code.status.clear();
+        self.code.confirm = false;
+        // an empty editor is filled from the specification on the first visit of the tab
+        self.code.tried = false;
+    }
+
     /// The action bar of the Code tab.
     pub(super) fn code_menu(&mut self, ui: &mut egui::Ui) {
         let mut convert = false;
@@ -305,6 +335,8 @@ impl App {
             self.code.tried = true;
             if self.code.text.is_empty() {
                 self.code_convert();
+                // only looking at the tab is not a change of the project
+                self.code.mark_saved();
             }
         }
         let pane = egui::Frame::new()
@@ -744,7 +776,7 @@ fn clean_build(text: &str, dir: &Path) -> String {
 fn write_project(dir: &Path, text: &str, major: u32) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let proj = format!(
-        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net{major}.0</TargetFramework>\n    <AssemblyName>speci</AssemblyName>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>disable</ImplicitUsings>\n    <InvariantGlobalization>true</InvariantGlobalization>\n    <UseAppHost>false</UseAppHost>\n    <NuGetAudit>false</NuGetAudit>\n  </PropertyGroup>\n</Project>\n"
+        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net{major}.0</TargetFramework>\n    <AssemblyName>speci</AssemblyName>\n    <Nullable>disable</Nullable>\n    <ImplicitUsings>disable</ImplicitUsings>\n    <InvariantGlobalization>true</InvariantGlobalization>\n    <UseAppHost>false</UseAppHost>\n    <NuGetAudit>false</NuGetAudit>\n  </PropertyGroup>\n</Project>\n"
     );
     let write_if_changed = |name: &str, content: &str| -> std::io::Result<()> {
         let path: PathBuf = dir.join(name);

@@ -61,6 +61,34 @@ pub fn console_input(spec: &Spec, test: &str) -> Result<String, String> {
     Ok(out)
 }
 
+// ------------------------------------------------------------------------------ carbon
+
+/// Percent-encoding like JavaScript's `encodeURIComponent` (`strict`: `!*'()` too).
+fn percent(s: &str, strict: bool) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for b in s.bytes() {
+        let plain = b.is_ascii_alphanumeric()
+            || matches!(b, b'-' | b'_' | b'.' | b'~')
+            || (!strict && matches!(b, b'!' | b'*' | b'\'' | b'(' | b')'));
+        if plain {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// A link that opens `code` in carbon.now.sh, as an image of the program with the settings
+/// the app uses (Seti theme, Hack font, C# highlighting). Carbon takes the code encoded twice.
+pub fn carbon_link(code: &str) -> String {
+    const SETTINGS: &str = "bg=rgba%28171%2C+184%2C+195%2C+1%29&t=seti&wt=none&l=text%2Fx-csharp&width=680&ds=true&dsyoff=20px&dsblur=68px&wc=true&wa=true&pv=56px&ph=56px&ln=false&fl=1&fm=Hack&fs=14px&lh=133%25&si=false&es=2x&wm=false";
+    format!(
+        "https://carbon.now.sh/?{SETTINGS}&code={}",
+        percent(&percent(code, false), true)
+    )
+}
+
 // ------------------------------------------------------------------------------ types
 
 #[derive(Clone, Debug, PartialEq)]
@@ -96,6 +124,14 @@ enum Ir {
     Repeat(Expr, Vec<Ir>),
     Switch(Vec<(Option<Expr>, Vec<Ir>)>),
     Todo(String),
+}
+
+/// A variable a routine declares.
+struct Var<'d> {
+    name: String,
+    ty: Ty,
+    /// The specification's declaration (it has the array's bounds), if it is one.
+    decl: Option<&'d crate::parser::Decl>,
 }
 
 struct Gen<'a> {
@@ -1109,7 +1145,7 @@ impl<'a> Gen<'a> {
 
 // ---------------------------------------------------------------------------- the program
 
-const SPLIT: &str = "Console.ReadLine()!.Split(' ', StringSplitOptions.RemoveEmptyEntries)";
+const SPLIT: &str = "Console.ReadLine().Split(' ', StringSplitOptions.RemoveEmptyEntries)";
 
 impl<'a> Gen<'a> {
     fn run(
@@ -1199,30 +1235,31 @@ impl<'a> Gen<'a> {
             }
             self.line("");
         }
+        let mut vars: Vec<Var> = vec![];
         for d in &others {
             let ty = self.vars[&d.name].clone();
-            let name = id(&d.name);
-            let init = match &ty {
-                Ty::Arr { .. } => self.alloc(&d.ty),
-                Ty::Rec(n) => format!("new {n}()"),
-                t => self.default_lit(t),
-            };
             if !self.statics {
-                self.line(&format!("{} {name} = {init};", self.cs(&ty)));
+                vars.push(Var {
+                    name: d.name.clone(),
+                    ty,
+                    decl: Some(d),
+                });
             } else if matches!(ty, Ty::Arr { .. }) {
-                self.line(&format!("{name} = {init};"));
+                // a field: its array is made here
+                let alloc = self.alloc(&d.ty);
+                self.line(&format!("{} = {alloc};", id(&d.name)));
             }
         }
         let main_d = &program.diagrams[main];
         let main_ir = irs.remove(&main).unwrap_or_default();
-        let locals = self.locals(main_d, &main_ir, &[]);
-        for (n, t) in &locals {
-            self.declare_local(n, t);
+        for (name, ty) in self.locals(main_d, &main_ir, &[]) {
+            vars.push(Var {
+                name,
+                ty,
+                decl: None,
+            });
         }
-        if !others.is_empty() || !locals.is_empty() {
-            self.line("");
-        }
-        self.emit(&main_ir);
+        self.declare_and_emit(vars, &main_ir, true);
         if !outs.is_empty() {
             self.line("");
             self.line(&format!("// {kw_out}: {}", names(&outs)));
@@ -1327,21 +1364,89 @@ impl<'a> Gen<'a> {
         }
     }
 
-    fn declare_local(&mut self, name: &str, ty: &Ty) {
-        let init = match ty {
-            Ty::Arr { dims, elem, .. } => {
+    /// What a variable starts with when it is declared before its first step.
+    fn init_of(&mut self, v: &Var) -> String {
+        match (&v.ty, v.decl) {
+            (Ty::Arr { .. }, Some(d)) => self.alloc(&d.ty),
+            (Ty::Arr { dims, elem, .. }, None) => {
                 self.note(format!(
-                    "the length of the array `{name}` is not known: {} used",
-                    self.fallback
+                    "the length of the array `{}` is not known: {} used",
+                    v.name, self.fallback
                 ));
                 let size = vec![self.fallback.clone(); *dims].join(", ");
                 format!("new {}[{size}]", self.cs(elem))
             }
-            Ty::Rec(n) => format!("new {n}()"),
-            t => self.default_lit(t),
-        };
-        self.vars.insert(name.to_string(), ty.clone());
-        self.line(&format!("{} {} = {init};", self.cs(ty), id(name)));
+            (Ty::Rec(n), _) => format!("new {n}()"),
+            (t, _) => self.default_lit(t),
+        }
+    }
+
+    /// Declares the variables of a routine and writes its steps. A variable whose first step is
+    /// to get its value is declared with it (`int i = 1;`), as long as that value reads nothing
+    /// that is not declared yet; the others are declared first, with a starting value.
+    fn declare_and_emit(&mut self, vars: Vec<Var>, ir: &[Ir], blank: bool) {
+        // the plain assignments the routine starts with
+        let lead: Vec<(&Expr, &Expr, &str)> = ir
+            .iter()
+            .map_while(|s| match s {
+                Ir::Assign(t, v) => match &*t.kind {
+                    ExprKind::Var(n) => Some((t, v, n.as_str())),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        // variables of this routine whose first step is in `lead`, until their step comes
+        let mut waiting: Vec<&str> = vec![];
+        for (_, _, n) in &lead {
+            if vars.iter().any(|v| v.name == *n) && !waiting.contains(n) {
+                waiting.push(n);
+            }
+        }
+        let mut merged = vec![false; lead.len()];
+        for (k, (_, value, n)) in lead.iter().enumerate() {
+            if !waiting.contains(n) {
+                continue;
+            }
+            // what the value reads must be declared before this step: a variable that is
+            // still waiting for its own step is declared first instead (`a = b + 1; b = 2;`)
+            let reads = vars_in(value);
+            waiting.retain(|w| !reads.iter().any(|r| r == w || r == n) || w == n);
+            // `i = i + 1` reads itself: it needs its starting value
+            merged[k] = !reads.contains(&n.to_string());
+            waiting.retain(|w| w != n);
+        }
+        let merged_names: Vec<&str> = lead
+            .iter()
+            .zip(&merged)
+            .filter(|(_, m)| **m)
+            .map(|((_, _, n), _)| *n)
+            .collect();
+        let mut any = false;
+        for v in vars
+            .iter()
+            .filter(|v| !merged_names.contains(&v.name.as_str()))
+        {
+            let init = self.init_of(v);
+            self.vars.insert(v.name.clone(), v.ty.clone());
+            self.line(&format!("{} {} = {init};", self.cs(&v.ty), id(&v.name)));
+            any = true;
+        }
+        if any && blank {
+            self.line("");
+        }
+        for (k, (t, value, n)) in lead.iter().enumerate() {
+            if merged[k] {
+                let ty = vars.iter().find(|v| v.name == *n).unwrap().ty.clone();
+                let value = self.ex_want(value, 0, &ty);
+                self.vars.insert(n.to_string(), ty.clone());
+                self.line(&format!("{} {} = {value};", self.cs(&ty), id(n)));
+            } else {
+                let _ = t;
+                self.emit(&ir[k..=k]);
+            }
+        }
+        self.emit(&ir[lead.len()..]);
     }
 
     /// The fields of `Program`, for a specification with functions.
@@ -1356,12 +1461,6 @@ impl<'a> Gen<'a> {
             let cs = self.cs(ty);
             match ty {
                 Ty::Str => out.push_str(&format!("    static string {} = \"\";\n", id(&d.name))),
-                Ty::Arr { dims, elem, .. } => out.push_str(&format!(
-                    "    static {cs} {} = new {}[{}];\n",
-                    id(&d.name),
-                    self.cs(elem),
-                    vec!["0"; *dims].join(", ")
-                )),
                 _ => match scalars.iter_mut().find(|(t, _)| *t == cs) {
                     Some((_, v)) => v.push(id(&d.name)),
                     None => scalars.push((cs, vec![id(&d.name)])),
@@ -1448,10 +1547,16 @@ impl<'a> Gen<'a> {
             plist.join(", ")
         ));
         self.open();
-        for (n, t) in self.locals(d, ir, params) {
-            self.declare_local(&n, &t);
-        }
-        self.emit(ir);
+        let vars: Vec<Var> = self
+            .locals(d, ir, params)
+            .into_iter()
+            .map(|(name, ty)| Var {
+                name,
+                ty,
+                decl: None,
+            })
+            .collect();
+        self.declare_and_emit(vars, ir, false);
         if let Some(r) = &ret {
             let r = self.ex(r, 0);
             self.line(&format!("return {r};"));
@@ -1543,7 +1648,7 @@ impl<'a> Gen<'a> {
         let name = id(&d.name);
         let pre = self.prefix(&ty);
         match &ty {
-            Ty::Str => self.line(&format!("{pre}{name} = Console.ReadLine()!;")),
+            Ty::Str => self.line(&format!("{pre}{name} = Console.ReadLine();")),
             t if t.is_scalar() => {
                 self.line(&format!("{sor} = {SPLIT};"));
                 let p = self.parse(t, &format!("{sor}[0]"));
@@ -1950,8 +2055,6 @@ class Program
         int[] szamok = new int[] { 0, 3, 72, 81, 4, 5 };
 
         int db = 0;
-
-        db = 0;
         for (int i = 1; i <= n; i++)
         {
             if (szamok[i] % 2 == 1)
@@ -2019,6 +2122,86 @@ class Program
             decision("r≤0", vec![stmt("s:=1")]),
         ]);
         assert_eq!(code(&p).matches("if (").count(), 2);
+    }
+
+    /// The link of a program, as carbon.now.sh gave it for this one.
+    #[test]
+    fn carbon_link_is_what_carbon_makes() {
+        let code = "using System;\n\nclass Program\n{\n    static int n, pontElsoUresig;\n    static int[] pontok = new int[0];\n\n    static void Main()\n    {\n        // Be: n, pontok\n        n = 1;\n        pontok = new int[] { 0, 0 };\n\n\n        pontElsoUresig = 0;\n        for (int i = 1; i <= elsoUres(pontok) - 1; i++)\n        {\n            pontElsoUresig = pontElsoUresig + pontok[i];\n        }\n\n        // Ki: pontElsoUresig\n        Console.WriteLine(\"pontElsoUresig = \" + pontElsoUresig);\n        // Várt (teszteset): pontElsoUresig = 0\n    }\n\n    static int elsoUres(int[] pontok)\n    {\n        bool van = false;\n        int ind = 0;\n        int j = 0;\n        j = 1;\n        while (j <= n && !(pontok[j] == 0))\n        {\n            j = j + 1;\n        }\n        van = j <= n;\n        if (van)\n        {\n            ind = j;\n        }\n        return van ? ind : n;\n    }\n}\n";
+        let expected = "https://carbon.now.sh/?bg=rgba%28171%2C+184%2C+195%2C+1%29&t=seti&wt=none&l=text%2Fx-csharp&width=680&ds=true&dsyoff=20px&dsblur=68px&wc=true&wa=true&pv=56px&ph=56px&ln=false&fl=1&fm=Hack&fs=14px&lh=133%25&si=false&es=2x&wm=false&code=using%2520System%253B%250A%250Aclass%2520Program%250A%257B%250A%2520%2520%2520%2520static%2520int%2520n%252C%2520pontElsoUresig%253B%250A%2520%2520%2520%2520static%2520int%255B%255D%2520pontok%2520%253D%2520new%2520int%255B0%255D%253B%250A%250A%2520%2520%2520%2520static%2520void%2520Main%28%29%250A%2520%2520%2520%2520%257B%250A%2520%2520%2520%2520%2520%2520%2520%2520%252F%252F%2520Be%253A%2520n%252C%2520pontok%250A%2520%2520%2520%2520%2520%2520%2520%2520n%2520%253D%25201%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520pontok%2520%253D%2520new%2520int%255B%255D%2520%257B%25200%252C%25200%2520%257D%253B%250A%250A%250A%2520%2520%2520%2520%2520%2520%2520%2520pontElsoUresig%2520%253D%25200%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520for%2520%28int%2520i%2520%253D%25201%253B%2520i%2520%253C%253D%2520elsoUres%28pontok%29%2520-%25201%253B%2520i%252B%252B%29%250A%2520%2520%2520%2520%2520%2520%2520%2520%257B%250A%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520pontElsoUresig%2520%253D%2520pontElsoUresig%2520%252B%2520pontok%255Bi%255D%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520%257D%250A%250A%2520%2520%2520%2520%2520%2520%2520%2520%252F%252F%2520Ki%253A%2520pontElsoUresig%250A%2520%2520%2520%2520%2520%2520%2520%2520Console.WriteLine%28%2522pontElsoUresig%2520%253D%2520%2522%2520%252B%2520pontElsoUresig%29%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520%252F%252F%2520V%25C3%25A1rt%2520%28teszteset%29%253A%2520pontElsoUresig%2520%253D%25200%250A%2520%2520%2520%2520%257D%250A%250A%2520%2520%2520%2520static%2520int%2520elsoUres%28int%255B%255D%2520pontok%29%250A%2520%2520%2520%2520%257B%250A%2520%2520%2520%2520%2520%2520%2520%2520bool%2520van%2520%253D%2520false%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520int%2520ind%2520%253D%25200%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520int%2520j%2520%253D%25200%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520j%2520%253D%25201%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520while%2520%28j%2520%253C%253D%2520n%2520%2526%2526%2520%21%28pontok%255Bj%255D%2520%253D%253D%25200%29%29%250A%2520%2520%2520%2520%2520%2520%2520%2520%257B%250A%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520j%2520%253D%2520j%2520%252B%25201%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520%257D%250A%2520%2520%2520%2520%2520%2520%2520%2520van%2520%253D%2520j%2520%253C%253D%2520n%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520if%2520%28van%29%250A%2520%2520%2520%2520%2520%2520%2520%2520%257B%250A%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520%2520ind%2520%253D%2520j%253B%250A%2520%2520%2520%2520%2520%2520%2520%2520%257D%250A%2520%2520%2520%2520%2520%2520%2520%2520return%2520van%2520%253F%2520ind%2520%253A%2520n%253B%250A%2520%2520%2520%2520%257D%250A%257D%250A";
+        assert_eq!(carbon_link(code), expected);
+    }
+
+    /// A variable that gets its value first is declared with it, unless something needs it
+    /// declared earlier.
+    #[test]
+    fn a_first_value_is_the_declaration() {
+        use crate::stuki::model::{Diagram, Kind, Node, fresh_id};
+        use crate::stuki::rich::Rich;
+        let stmt = |t: &str| Node {
+            id: fresh_id(),
+            bg: None,
+            kind: Kind::Statement(Rich::plain(t)),
+        };
+        let spec = parse("In: n∈Z\nOut: r∈Z\nPre: -\nPost: r = n\n").unwrap();
+        let code = |vars: &str, body: &[&str]| {
+            let mut d = Diagram::new();
+            d.variables = Rich::plain(vars);
+            d.body = body.iter().map(|t| stmt(t)).collect();
+            let p = Program {
+                diagrams: vec![d],
+                ..Program::default()
+            };
+            let out = generate(&spec, &p, Inputs::Test, "n: 4\nr: 4\n").unwrap();
+            out.code
+        };
+        // plain: declared with the value
+        let c = code("i:Egész", &["i:=1", "r:=i+n"]);
+        assert!(c.contains("int i = 1;") && !c.contains("int i = 0;"), "{c}");
+        assert!(c.contains("int r = i + n;"), "{c}");
+        // reads itself: starts with a value of its own, then the step
+        let c = code("i:Egész", &["i:=i+1", "r:=i"]);
+        assert!(c.contains("int i = 0;") && c.contains("i = i + 1;"), "{c}");
+        // reads a variable that gets its value later: that one is declared first
+        let c = code("a:Egész, b:Egész", &["a:=b+1", "b:=2", "r:=a+b"]);
+        let (b0, a1) = (
+            c.find("int b = 0;").expect(&c),
+            c.find("int a = b + 1;").expect(&c),
+        );
+        assert!(
+            b0 < a1 && c.contains("b = 2;") && !c.contains("int b = 2;"),
+            "{c}"
+        );
+        // every step the routine starts with
+        let c = code("i:Egész", &["r:=n", "i:=1"]);
+        assert!(c.contains("int r = n;") && c.contains("int i = 1;"), "{c}");
+        // but only those: after a decision a variable is declared first, as before
+        let mut d = Diagram::new();
+        d.variables = Rich::plain("i:Egész");
+        d.body = vec![
+            stmt("r:=n"),
+            Node {
+                id: fresh_id(),
+                bg: None,
+                kind: Kind::If {
+                    cond: Rich::plain("n>0"),
+                    yes: vec![stmt("r:=1")],
+                    no: vec![Node::noop()],
+                },
+            },
+            stmt("i:=1"),
+        ];
+        let p = Program {
+            diagrams: vec![d],
+            ..Program::default()
+        };
+        let c = generate(&spec, &p, Inputs::Test, "n: 4\nr: 4\n")
+            .unwrap()
+            .code;
+        assert!(
+            c.contains("int r = n;") && c.contains("int i = 0;") && c.contains("i = 1;"),
+            "{c}"
+        );
     }
 
     #[test]
