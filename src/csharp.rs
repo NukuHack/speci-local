@@ -77,6 +77,93 @@ pub fn console_output(spec: &Spec, test: &str) -> Result<String, String> {
     Ok(out)
 }
 
+// ------------------------------------------------------------------------------ the Code tab
+
+/// A structogram program with nothing drawn in it (a fresh Stuki tab has one empty diagram).
+pub fn is_blank(program: &Program) -> bool {
+    program.diagrams.iter().all(|d| {
+        d.body.iter().all(|n| match &n.kind {
+            Kind::Noop => true,
+            Kind::Statement(t) => matches!(t.text.trim(), "" | "-"),
+            _ => false,
+        })
+    })
+}
+
+/// A converted program.
+pub struct Converted {
+    pub code: String,
+    /// Things that could not be translated or were guessed.
+    pub notes: Vec<String>,
+    /// Console mode: what the program reads for the test case.
+    pub stdin: Option<String>,
+    /// The Stuki tab had nothing drawn, so `from_spec`'s structograms were used.
+    pub own_structograms: bool,
+}
+
+pub enum ConvertError {
+    /// The specification doesn't parse: ` (line 3: …)`.
+    Spec(String),
+    /// The test case can't be used.
+    Test(String),
+}
+
+/// The program of a project: from the specification and its structograms (or, when nothing is
+/// drawn, the ones `from_spec` makes), for the test case `test`.
+pub fn convert(
+    spec_text: &str,
+    title: &str,
+    stuki: &Program,
+    test: &str,
+    inputs: Inputs,
+) -> Result<Converted, ConvertError> {
+    let spec = crate::parser::parse(spec_text).map_err(|d| {
+        ConvertError::Spec(match d.first() {
+            Some(d) if d.line > 0 => format!(" (line {}: {})", d.line, d.title),
+            Some(d) => format!(" ({})", d.title),
+            None => String::new(),
+        })
+    })?;
+    let own_structograms = is_blank(stuki);
+    let program = if own_structograms {
+        crate::stuki::from_spec::from_spec(&spec, title).program
+    } else {
+        stuki.clone()
+    };
+    let out = generate(&spec, &program, inputs, test).map_err(ConvertError::Test)?;
+    let mut notes = out.notes;
+    let stdin = match inputs {
+        Inputs::Console => match console_input(&spec, test) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                notes.push(format!("no input from the test case: {e}"));
+                None
+            }
+        },
+        Inputs::Test => None,
+    };
+    Ok(Converted {
+        code: out.code,
+        notes,
+        stdin,
+        own_structograms,
+    })
+}
+
+/// Is `actual` what the test case expects? Trailing spaces and empty lines at the end do not
+/// matter (an array is printed with a space after each element).
+pub fn same_output(expected: &str, actual: &str) -> bool {
+    let norm = |t: &str| {
+        t.lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string()
+    };
+    norm(expected) == norm(actual)
+}
+
 // ------------------------------------------------------------------------------ carbon
 
 /// Percent-encoding like JavaScript's `encodeURIComponent` (`strict`: `!*'()` too).

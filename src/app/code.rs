@@ -5,17 +5,13 @@
 use super::App;
 use super::theme::{card, pane_title};
 use crate::csharp::{self, Inputs};
+use crate::dotnet;
 use crate::editor::{Lang, code_editor, cursor_of};
 use crate::platform;
 use crate::ui::{ACCENT, GREEN, I_CLOSE, I_OK, I_RUN, I_WAND, I_WARN, RED};
 use eframe::egui::{self, Id, Margin, RichText};
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Where the program gets its input.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Default, Debug)]
@@ -61,7 +57,7 @@ pub struct Code {
     #[serde(skip)]
     ran: String,
     #[serde(skip)]
-    pub(super) run: Option<Run>,
+    pub(super) run: Option<dotnet::Run>,
     /// Ask before a conversion replaces text that was edited.
     #[serde(skip)]
     pub(super) confirm: bool,
@@ -78,23 +74,6 @@ pub struct Code {
     /// made from (the hash).
     #[serde(skip)]
     expected: Option<(u64, Result<String, String>)>,
-}
-
-/// A build-and-run in the background.
-pub(super) struct Run {
-    rx: mpsc::Receiver<Msg>,
-    stop: Arc<AtomicBool>,
-    stdin: Arc<Mutex<Option<ChildStdin>>>,
-    started: Instant,
-}
-
-enum Msg {
-    /// A piece of the program's output.
-    Out(String),
-    /// The build failed: its messages.
-    Build(String),
-    /// The end, with a summary.
-    Done(String),
 }
 
 fn code_editor_id() -> Id {
@@ -209,51 +188,39 @@ impl App {
 
     /// Writes the program from the specification and the structograms.
     pub(super) fn code_convert(&mut self) {
-        let spec = match crate::parser::parse(&self.doc.spec) {
-            Ok(s) => s,
-            Err(d) => {
-                let at = match d.first() {
-                    Some(d) if d.line > 0 => format!(" (line {}: {})", d.line, d.title),
-                    Some(d) => format!(" ({})", d.title),
-                    None => String::new(),
-                };
-                self.code.status =
-                    format!("Fix the specification on the Specification tab first{at}");
-                return;
-            }
-        };
-        let own = is_blank(&self.stuki.program);
-        let program = if own {
-            crate::stuki::from_spec::from_spec(&spec, &self.doc.title).program
-        } else {
-            self.stuki.program.clone()
-        };
         let test = self
             .doc
             .tests
             .get(self.current)
             .cloned()
             .unwrap_or_default();
-        match csharp::generate(&spec, &program, self.code.source.into(), &test) {
-            Ok(out) => {
-                self.code.text = out.code.clone();
-                self.code.generated = out.code;
-                self.code.notes = out.notes;
+        match csharp::convert(
+            &self.doc.spec,
+            &self.doc.title,
+            &self.stuki.program,
+            &test,
+            self.code.source.into(),
+        ) {
+            Ok(c) => {
+                self.code.text = c.code.clone();
+                self.code.generated = c.code;
+                self.code.notes = c.notes;
                 self.code.errors.clear();
-                if self.code.source == Source::Console {
-                    match csharp::console_input(&spec, &test) {
-                        Ok(text) => self.code.stdin = text,
-                        Err(e) => self.code.status = format!("No input from the test case: {e}"),
-                    }
+                if let Some(stdin) = c.stdin {
+                    self.code.stdin = stdin;
                 }
-                let from = if own {
+                let from = if c.own_structograms {
                     "the specification (the Stuki tab is empty, so From spec's structograms were used)"
                 } else {
                     "the specification and the structograms"
                 };
                 self.code.status = format!("Program written from {from}");
             }
-            Err(e) => {
+            Err(csharp::ConvertError::Spec(at)) => {
+                self.code.status =
+                    format!("Fix the specification on the Specification tab first{at}");
+            }
+            Err(csharp::ConvertError::Test(e)) => {
                 self.code.status = format!("Can't convert (test case {}): {e}", self.current + 1);
             }
         }
@@ -261,7 +228,7 @@ impl App {
 
     pub(super) fn code_stop(&mut self) {
         if let Some(r) = &self.code.run {
-            r.stop.store(true, Ordering::Relaxed);
+            r.stop();
         }
     }
 
@@ -274,34 +241,23 @@ impl App {
         if self.code.run.is_some() {
             return;
         }
-        let (tx, rx) = mpsc::channel();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stdin = Arc::new(Mutex::new(None));
         let console = self.code.source == Source::Console;
-        let job = Job {
-            text: self.code.text.clone(),
-            input: if console {
-                self.code.stdin.clone()
-            } else {
-                String::new()
-            },
-            keep_stdin: console,
-            tx,
-            stop: stop.clone(),
-            stdin: stdin.clone(),
-            ctx: ctx.clone(),
+        let input = if console {
+            self.code.stdin.clone()
+        } else {
+            String::new()
         };
+        let wake = ctx.clone();
         self.code.ran = self.code.text.clone();
         self.code.output.clear();
         self.code.errors.clear();
         self.code.status = "Building…".into();
-        std::thread::spawn(move || job.go());
-        self.code.run = Some(Run {
-            rx,
-            stop,
-            stdin,
-            started: Instant::now(),
-        });
+        self.code.run = Some(dotnet::Run::start(
+            self.code.text.clone(),
+            input,
+            console,
+            move || wake.request_repaint(),
+        ));
     }
 
     /// Takes what the background run has produced.
@@ -310,14 +266,14 @@ impl App {
             return;
         };
         let mut done = None;
-        while let Ok(m) = run.rx.try_recv() {
+        while let Some(m) = run.try_recv() {
             match m {
-                Msg::Out(s) => self.code.output.push_str(&s),
-                Msg::Build(s) => {
-                    self.code.errors = error_lines(&s);
+                dotnet::Msg::Out(s) => self.code.output.push_str(&s),
+                dotnet::Msg::Build(s) => {
+                    self.code.errors = dotnet::error_lines(&s);
                     self.code.output.push_str(&s);
                 }
-                Msg::Done(s) => done = Some(s),
+                dotnet::Msg::Done(s) => done = Some(s),
             }
         }
         match done {
@@ -326,7 +282,7 @@ impl App {
                 self.code.run = None;
             }
             None => {
-                let secs = run.started.elapsed().as_secs_f32();
+                let secs = run.elapsed().as_secs_f32();
                 self.code.status = format!("Running… {secs:.0} s");
                 ctx.request_repaint_after(Duration::from_millis(200));
             }
@@ -584,28 +540,16 @@ impl App {
         {
             return None;
         }
-        // trailing spaces and empty lines at the end do not matter
-        let norm = |t: &str| {
-            t.lines()
-                .map(str::trim_end)
-                .collect::<Vec<_>>()
-                .join("\n")
-                .trim_end()
-                .to_string()
-        };
         let expected = self.expected_output().ok()?;
-        Some(norm(&expected) == norm(&self.code.output))
+        Some(csharp::same_output(&expected, &self.code.output))
     }
 
     /// One more line for the running program.
     fn code_send(&mut self) {
         let line = std::mem::take(&mut self.code.send);
         if let Some(run) = &self.code.run
-            && let Ok(mut slot) = run.stdin.lock()
-            && let Some(w) = slot.as_mut()
+            && run.send_line(&line)
         {
-            let _ = writeln!(w, "{line}");
-            let _ = w.flush();
             self.code.output.push_str(&format!("{line}\n"));
         }
     }
@@ -634,246 +578,4 @@ impl App {
         ctx.copy_text(self.code.text.clone());
         self.code.status = "Copied the C# program".into();
     }
-}
-
-/// A structogram program with nothing drawn in it (a fresh Stuki tab has one empty diagram).
-fn is_blank(program: &crate::stuki::model::Program) -> bool {
-    use crate::stuki::model::Kind;
-    program.diagrams.iter().all(|d| {
-        d.body.iter().all(|n| match &n.kind {
-            Kind::Noop => true,
-            Kind::Statement(t) => matches!(t.text.trim(), "" | "-"),
-            _ => false,
-        })
-    })
-}
-
-/// The 1-based lines `Program.cs(12,5): error CS…` messages point to.
-fn error_lines(build: &str) -> Vec<usize> {
-    let mut lines: Vec<usize> = build
-        .lines()
-        .filter(|l| l.contains(": error "))
-        .filter_map(|l| {
-            let rest = l.strip_prefix("Program.cs(")?;
-            rest.split([',', ')']).next()?.parse().ok()
-        })
-        .collect();
-    lines.sort_unstable();
-    lines.dedup();
-    lines
-}
-
-// ------------------------------------------------------------------------ the background job
-
-struct Job {
-    text: String,
-    input: String,
-    keep_stdin: bool,
-    tx: mpsc::Sender<Msg>,
-    stop: Arc<AtomicBool>,
-    stdin: Arc<Mutex<Option<ChildStdin>>>,
-    ctx: egui::Context,
-}
-
-const NO_DOTNET: &str = "`dotnet` was not found on the PATH. Install the .NET SDK (dotnet.microsoft.com/download), then start the app again.";
-
-fn dotnet() -> Command {
-    let mut c = Command::new("dotnet");
-    c.env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
-        .env("DOTNET_NOLOGO", "1")
-        .env("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "1");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000); // no console window
-    }
-    c
-}
-
-impl Job {
-    fn send(&self, m: Msg) {
-        let _ = self.tx.send(m);
-        self.ctx.request_repaint();
-    }
-
-    fn go(self) {
-        let end = |j: &Job, s: String| j.send(Msg::Done(s));
-        // the newest SDK decides the target framework
-        let major = match dotnet().arg("--version").output() {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-                .trim()
-                .split('.')
-                .next()
-                .and_then(|m| m.parse::<u32>().ok())
-                .unwrap_or(8),
-            Ok(o) => {
-                let e = String::from_utf8_lossy(&o.stderr).trim().to_string();
-                return end(&self, format!("`dotnet --version` failed: {e}"));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return end(&self, NO_DOTNET.into());
-            }
-            Err(e) => return end(&self, format!("Can't start dotnet: {e}")),
-        };
-        if major < 6 {
-            return end(
-                &self,
-                format!("The .NET SDK is too old (version {major}): .NET 6 or newer is needed"),
-            );
-        }
-        let dir = std::env::temp_dir().join("speci-local-csharp");
-        if let Err(e) = write_project(&dir, &self.text, major) {
-            return end(
-                &self,
-                format!("Can't write the project in {}: {e}", dir.display()),
-            );
-        }
-
-        // build, so that what runs (and what Stop kills) is the program itself
-        let out = dir.join("out");
-        let built = dotnet()
-            .arg("build")
-            .arg(dir.join("speci.csproj"))
-            .args(["-c", "Debug", "-v", "q", "--nologo", "-o"])
-            .arg(&out)
-            .stdin(Stdio::null())
-            .output();
-        let built = match built {
-            Ok(b) => b,
-            Err(e) => return end(&self, format!("Can't start dotnet: {e}")),
-        };
-        if !built.status.success() {
-            let text = String::from_utf8_lossy(&built.stdout);
-            self.send(Msg::Build(clean_build(&text, &dir)));
-            return end(&self, "The program has errors".into());
-        }
-        if self.stop.load(Ordering::Relaxed) {
-            return end(&self, "Stopped".into());
-        }
-
-        let mut child = match dotnet()
-            .arg(out.join("speci.dll"))
-            .current_dir(&dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => return end(&self, format!("Can't start the program: {e}")),
-        };
-        if let Some(mut w) = child.stdin.take() {
-            let mut text = self.input.clone();
-            if !text.is_empty() && !text.ends_with('\n') {
-                text.push('\n');
-            }
-            let _ = w.write_all(text.as_bytes());
-            let _ = w.flush();
-            if self.keep_stdin {
-                if let Ok(mut slot) = self.stdin.lock() {
-                    *slot = Some(w);
-                }
-            }
-        }
-        let readers: Vec<_> = [
-            child
-                .stdout
-                .take()
-                .map(|r| Box::new(r) as Box<dyn Read + Send>),
-            child
-                .stderr
-                .take()
-                .map(|r| Box::new(r) as Box<dyn Read + Send>),
-        ]
-        .into_iter()
-        .flatten()
-        .map(|mut r| {
-            let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = r.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    let _ = tx.send(Msg::Out(String::from_utf8_lossy(&buf[..n]).into_owned()));
-                    ctx.request_repaint();
-                }
-            })
-        })
-        .collect();
-
-        let started = Instant::now();
-        let status = wait(&mut child, &self.stop);
-        if let Ok(mut slot) = self.stdin.lock() {
-            *slot = None;
-        }
-        for r in readers {
-            let _ = r.join();
-        }
-        let secs = started.elapsed().as_secs_f32();
-        end(
-            &self,
-            match status {
-                None => "Stopped".into(),
-                Some(s) if s.success() => format!("Finished in {secs:.1} s"),
-                Some(s) => format!(
-                    "The program ended with an error (exit code {}) after {secs:.1} s",
-                    s.code().map_or("?".into(), |c| c.to_string())
-                ),
-            },
-        );
-    }
-}
-
-/// Waits for the program; `None` when it was stopped (and killed).
-fn wait(child: &mut Child, stop: &AtomicBool) -> Option<ExitStatus> {
-    loop {
-        if stop.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-        match child.try_wait() {
-            Ok(Some(s)) => return Some(s),
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(_) => return None,
-        }
-    }
-}
-
-/// `Program.cs(3,9): error CS…` lines without the paths around them.
-fn clean_build(text: &str, dir: &Path) -> String {
-    let dir = dir.display().to_string();
-    let mut out = String::new();
-    let mut seen = std::collections::HashSet::new();
-    for l in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let l = l
-            .replace(&format!("{dir}/"), "")
-            .replace(&format!("{dir}\\"), "");
-        let l = match l.rfind(" [") {
-            Some(i) if l.ends_with(".csproj]") => l[..i].to_string(),
-            _ => l,
-        };
-        if seen.insert(l.clone()) {
-            out.push_str(&l);
-            out.push('\n');
-        }
-    }
-    out
-}
-
-fn write_project(dir: &Path, text: &str, major: u32) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let proj = format!(
-        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net{major}.0</TargetFramework>\n    <AssemblyName>speci</AssemblyName>\n    <Nullable>disable</Nullable>\n    <ImplicitUsings>disable</ImplicitUsings>\n    <InvariantGlobalization>true</InvariantGlobalization>\n    <UseAppHost>false</UseAppHost>\n    <NuGetAudit>false</NuGetAudit>\n  </PropertyGroup>\n</Project>\n"
-    );
-    let write_if_changed = |name: &str, content: &str| -> std::io::Result<()> {
-        let path: PathBuf = dir.join(name);
-        if std::fs::read_to_string(&path).is_ok_and(|old| old == content) {
-            return Ok(());
-        }
-        std::fs::write(path, content)
-    };
-    write_if_changed("speci.csproj", &proj)?;
-    write_if_changed("Program.cs", text)
 }
