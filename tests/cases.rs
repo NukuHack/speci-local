@@ -745,7 +745,9 @@ fn pattern_tuple_needs_its_codomain() {
 /// SZUMMA(i=e..u, f(i), kezd, add): the general summation of the programming patterns slides.
 #[test]
 fn general_sum_with_start_value_and_operation() {
-    let t = |x: &str, out: &str, name: &str| format!("n: {}\nx: {x}\n{name}: {out}", x.matches(',').count() + 1);
+    let t = |x: &str, out: &str, name: &str| {
+        format!("n: {}\nx: {x}\n{name}: {out}", x.matches(',').count() + 1)
+    };
     // + with the zero element, and with another start value
     let sum = "Be: n∈N, x∈Z[1..n]\nKi: s∈Z\nEf: -\nUf: s=SZUMMA(i=1..n, x[i], 0, +)";
     green(sum, &[&t("[1, 2, 3]", "6", "s"), &t("[-5, 5]", "0", "s")]);
@@ -753,15 +755,27 @@ fn general_sum_with_start_value_and_operation() {
     green(from10, &[&t("[1, 2, 3]", "16", "s")]);
     // * with 1 (product)
     let prod = "Be: n∈N, x∈Z[1..n]\nKi: p∈Z\nEf: -\nUf: p=SZUMMA(i=1..n, x[i], 1, *)";
-    green(prod, &[&t("[2, 3, 4]", "24", "p"), &t("[2, 0, 4]", "0", "p")]);
+    green(
+        prod,
+        &[&t("[2, 3, 4]", "24", "p"), &t("[2, 0, 4]", "0", "p")],
+    );
     // logical operators, in both languages
     let and = "Be: n∈N, x∈Z[1..n]\nKi: mind∈L\nEf: -\nUf: mind=SZUMMA(i=1..n, x[i]>0, igaz, és)";
-    green(and, &[&t("[1, 2]", "true", "mind"), &t("[1, -1]", "false", "mind")]);
+    green(
+        and,
+        &[&t("[1, 2]", "true", "mind"), &t("[1, -1]", "false", "mind")],
+    );
     let or = "In: n∈N, x∈Z[1..n]\nOut: any∈L\nPre: -\nPost: any=SUM(i=1..n, x[i]>0, false, or)";
-    green(or, &[&t("[-1, 2]", "true", "any"), &t("[-1, -2]", "false", "any")]);
+    green(
+        or,
+        &[&t("[-1, 2]", "true", "any"), &t("[-1, -2]", "false", "any")],
+    );
     // a wrong test is red
     let m = red(sum, &t("[1, 2, 3]", "7", "s"));
-    assert!(m.contains("the test case says 7, the specification gives 6"), "{m}");
+    assert!(
+        m.contains("the test case says 7, the specification gives 6"),
+        "{m}"
+    );
 }
 
 #[test]

@@ -223,16 +223,23 @@ impl Eval<'_> {
             "+" => self.arith(e, BinOp::Add, start, f, acc, v),
             "*" => self.arith(e, BinOp::Mul, start, f, acc, v),
             "and" | "or" => match (&acc, &v) {
-                (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(if name == "and" {
-                    *a && *b
-                } else {
-                    *a || *b
-                })),
+                (Value::Bool(a), Value::Bool(b)) => {
+                    Ok(Value::Bool(if name == "and" { *a && *b } else { *a || *b }))
+                }
                 _ => {
-                    let (bad, x) = if matches!(acc, Value::Bool(_)) { (f, &v) } else { (start, &acc) };
+                    let (bad, x) = if matches!(acc, Value::Bool(_)) {
+                        (f, &v)
+                    } else {
+                        (start, &acc)
+                    };
                     Err(self.err(
                         bad,
-                        format!("`{}` needs truth values, but `{}` is {}", name, self.t(bad), x.kind()),
+                        format!(
+                            "`{}` needs truth values, but `{}` is {}",
+                            name,
+                            self.t(bad),
+                            x.kind()
+                        ),
                     ))
                 }
             },

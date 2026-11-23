@@ -9,9 +9,9 @@
 pub mod app;
 mod compact;
 pub mod csharp;
-pub mod dotnet;
 pub mod data;
 pub mod diag;
+pub mod dotnet;
 #[cfg(feature = "gui")]
 mod editor;
 pub mod eval;
