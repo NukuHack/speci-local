@@ -14,7 +14,9 @@ use unicode_width::UnicodeWidthChar;
 pub enum Lang {
     Spec,
     Data,
-    #[cfg(test)]
+    /// The C# program of the Code tool.
+    Csharp,
+    /// No highlighting: the console input of the Code tool.
     Plain,
 }
 
@@ -180,6 +182,10 @@ impl Editor {
             self.p - s + 1,
         )
     }
+    /// The text of the line the cursor is on.
+    pub fn current_line(&self) -> String {
+        self.t[self.ls(self.p)..self.le(self.p)].iter().collect()
+    }
     pub fn n_lines(&self) -> usize {
         self.t.iter().filter(|&&c| c == '\n').count() + 1
     }
@@ -286,11 +292,24 @@ impl Editor {
             .collect();
         let before = self.p.checked_sub(1).map(|i| self.t[i]);
         let after = self.t.get(self.p).copied();
-        let opened = self.lang == Lang::Data && matches!(before, Some('[' | '{'));
+        // one level deeper after `[`/`{` (data) or `{` (C#); the closer goes on a line of its own
+        let (opened, closer, unit) = match self.lang {
+            Lang::Data => (
+                matches!(before, Some('[' | '{')),
+                matches!(after, Some(']' | '}')),
+                2,
+            ),
+            Lang::Csharp => (
+                self.t[s..self.p].iter().rev().find(|c| !c.is_whitespace()) == Some(&'{'),
+                after == Some('}'),
+                4,
+            ),
+            _ => (false, false, 2),
+        };
         if opened {
-            indent.extend([' ', ' ']);
+            indent.extend(std::iter::repeat_n(' ', unit));
         }
-        let split = opened && matches!(after, Some(']' | '}'));
+        let split = opened && closer;
         let mut ins = vec!['\n'];
         ins.extend(&indent);
         let at = self.p;
@@ -298,7 +317,7 @@ impl Editor {
         self.t.splice(at..at, ins);
         self.p = at + n;
         if split {
-            let base = indent.len().saturating_sub(2);
+            let base = indent.len().saturating_sub(unit);
             let mut more = vec!['\n'];
             more.extend(std::iter::repeat_n(' ', base));
             let at = self.p;
@@ -368,7 +387,11 @@ impl Editor {
                 if self.comp.is_some() {
                     self.complete(true);
                 } else if !(self.lang == Lang::Spec && expand_alias(&mut self.t, &mut self.p)) {
-                    self.insert_str("  ");
+                    self.insert_str(if self.lang == Lang::Csharp {
+                        "    "
+                    } else {
+                        "  "
+                    });
                 } else {
                     self.bump();
                 }
@@ -659,7 +682,7 @@ impl Editor {
             let toks = match self.lang {
                 Lang::Spec => highlight::spec(&self.t),
                 Lang::Data => highlight::data(&self.t),
-                #[cfg(test)]
+                Lang::Csharp => highlight::csharp(&self.t),
                 Lang::Plain => vec![Tok::Text; self.t.len()],
             };
             self.hl = Some((self.version, toks));

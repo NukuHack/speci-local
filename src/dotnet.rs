@@ -24,12 +24,28 @@ pub struct Run {
     rx: mpsc::Receiver<Msg>,
     stop: Arc<AtomicBool>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
+    /// The program itself is running (not just being built).
+    alive: Arc<AtomicBool>,
     started: Instant,
 }
 
 impl std::fmt::Debug for Run {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Run").finish_non_exhaustive()
+    }
+}
+
+impl Drop for Run {
+    /// A run nobody waits for any more must not leave the program running: give the thread
+    /// a moment to kill it (the app may be about to exit).
+    fn drop(&mut self) {
+        self.stop();
+        for _ in 0..40 {
+            if !self.alive.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
@@ -45,6 +61,7 @@ impl Run {
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let stdin = Arc::new(Mutex::new(None));
+        let alive = Arc::new(AtomicBool::new(false));
         let job = Job {
             text,
             input,
@@ -52,6 +69,7 @@ impl Run {
             tx,
             stop: stop.clone(),
             stdin: stdin.clone(),
+            alive: alive.clone(),
             wake: Arc::new(wake),
         };
         std::thread::spawn(move || job.go());
@@ -59,6 +77,7 @@ impl Run {
             rx,
             stop,
             stdin,
+            alive,
             started: Instant::now(),
         }
     }
@@ -111,6 +130,7 @@ struct Job {
     tx: mpsc::Sender<Msg>,
     stop: Arc<AtomicBool>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
+    alive: Arc<AtomicBool>,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -201,6 +221,7 @@ impl Job {
             Ok(c) => c,
             Err(e) => return end(&self, format!("Can't start the program: {e}")),
         };
+        self.alive.store(true, Ordering::Relaxed);
         if let Some(mut w) = child.stdin.take() {
             let mut text = self.input.clone();
             if !text.is_empty() && !text.ends_with('\n') {
@@ -208,10 +229,10 @@ impl Job {
             }
             let _ = w.write_all(text.as_bytes());
             let _ = w.flush();
-            if self.keep_stdin {
-                if let Ok(mut slot) = self.stdin.lock() {
-                    *slot = Some(w);
-                }
+            if self.keep_stdin
+                && let Ok(mut slot) = self.stdin.lock()
+            {
+                *slot = Some(w);
             }
         }
         let readers: Vec<_> = [
@@ -243,6 +264,7 @@ impl Job {
 
         let started = Instant::now();
         let status = wait(&mut child, &self.stop);
+        self.alive.store(false, Ordering::Relaxed);
         if let Ok(mut slot) = self.stdin.lock() {
             *slot = None;
         }
@@ -315,4 +337,62 @@ fn write_project(dir: &Path, text: &str, major: u32) -> std::io::Result<()> {
     };
     write_if_changed("speci.csproj", &proj)?;
     write_if_changed("Program.cs", text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn have_dotnet() -> bool {
+        Command::new("dotnet").arg("--version").output().is_ok()
+    }
+
+    const FOREVER: &str = "using System;\nclass Program { static void Main() { Console.WriteLine(\"up\"); while (true) { } } }\n";
+
+    /// Stopping, or just dropping a run, kills the program itself.
+    #[test]
+    fn a_dropped_run_leaves_nothing_running() {
+        if !have_dotnet() {
+            return;
+        }
+        for explicit_stop in [true, false] {
+            let run = Run::start(FOREVER.into(), String::new(), false, || {});
+            // wait until the program says it is up
+            let mut out = String::new();
+            let start = Instant::now();
+            while !out.contains("up") {
+                assert!(
+                    start.elapsed() < Duration::from_secs(120),
+                    "never started: {out}"
+                );
+                while let Some(m) = run.try_recv() {
+                    match m {
+                        Msg::Out(s) => out.push_str(&s),
+                        Msg::Build(s) => panic!("{s}"),
+                        Msg::Done(s) => panic!("ended early: {s}"),
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(run.alive.load(Ordering::Relaxed));
+            let alive = run.alive.clone();
+            if explicit_stop {
+                run.stop();
+                // the end message comes
+                let start = Instant::now();
+                loop {
+                    match run.try_recv() {
+                        Some(Msg::Done(s)) => {
+                            assert_eq!(s, "Stopped");
+                            break;
+                        }
+                        _ => std::thread::sleep(Duration::from_millis(10)),
+                    }
+                    assert!(start.elapsed() < Duration::from_secs(10), "not stopped");
+                }
+            }
+            drop(run);
+            assert!(!alive.load(Ordering::Relaxed), "the program still runs");
+        }
+    }
 }

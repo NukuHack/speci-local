@@ -1,7 +1,10 @@
 //! The application: documents, background evaluation, keys and commands.
 
 use crate::ascii;
+mod code_tool;
+
 use crate::clip;
+use crate::code::{Code, CodePane, Source};
 use crate::editor::{Editor, Lang, Req as EdReq};
 use crate::files::{Browser, Chosen, Kind};
 use crate::input::{In, Input};
@@ -12,7 +15,9 @@ use crate::vim::Vim;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use speci_local::diag::{Diagnostic, Pane as DiagPane};
 use speci_local::eval::Trace;
-use speci_local::file::{Doc, from_clipboard, from_sp, to_compact, to_sp};
+use speci_local::file::{
+    Doc, code_of, from_clipboard, from_project, from_sp, to_compact, to_project,
+};
 use speci_local::parser::Spec;
 use speci_local::stuki::format as stformat;
 use speci_local::stuki::from_spec;
@@ -30,6 +35,17 @@ const AUTO_DELAY: Duration = Duration::from_millis(300);
 pub enum Tool {
     Spec,
     Stuki,
+    Code,
+}
+
+impl Tool {
+    pub const ALL: [Self; 3] = [Self::Spec, Self::Stuki, Self::Code];
+
+    /// The next (or previous) tool, round and round.
+    pub fn step(self, fwd: bool) -> Self {
+        let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        Self::ALL[if fwd { (i + 1) % 3 } else { (i + 2) % 3 }]
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -54,6 +70,8 @@ pub enum Pending {
     Import(Doc, Option<Program>),
     ImportStuki(Program),
     FromSpec(Program, String),
+    /// Write the program again, replacing the edited one.
+    Convert,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -172,6 +190,7 @@ pub struct App {
     pub status: String,
     pub status_at: Instant,
     pub stuki: Stuki,
+    pub code: Code,
     pub overlay: Overlay,
     pub theme: Theme,
     pub eval_scroll: usize,
@@ -219,6 +238,7 @@ impl App {
             status: String::new(),
             status_at: Instant::now(),
             stuki: Stuki::default(),
+            code: Code::new(),
             overlay: Overlay::None,
             theme: Theme::new(dark),
             eval_scroll: 0,
@@ -264,6 +284,16 @@ impl App {
         self.doc != self.saved
     }
 
+    /// Anything the `.sp` file holds that changed: the specification, tests or the program.
+    pub fn project_dirty(&self) -> bool {
+        self.dirty() || self.code.dirty()
+    }
+
+    /// The tools whose files are `.sp` projects.
+    pub const fn spec_file(&self) -> bool {
+        matches!(self.tool, Tool::Spec | Tool::Code)
+    }
+
     pub fn data(&mut self) -> &mut Editor {
         let i = self.current.min(self.data_eds.len() - 1);
         &mut self.data_eds[i]
@@ -272,6 +302,11 @@ impl App {
     pub fn typing(&self) -> bool {
         match self.tool {
             Tool::Stuki => self.stuki.edit.is_some() || self.stuki.menu.is_some(),
+            Tool::Code => {
+                self.code.focus != CodePane::Output
+                    && self.vim.in_insert()
+                    && (self.vim.id_is(self.code.ed.id) || self.vim.id_is(self.code.input.id))
+            }
             Tool::Spec => {
                 self.focus != Pane::Eval
                     && self.vim.in_insert()
@@ -286,7 +321,11 @@ impl App {
             return;
         }
         let v = &mut self.vim;
-        for e in std::iter::once(&mut self.spec_ed).chain(self.data_eds.iter_mut()) {
+        let code = [&mut self.code.ed, &mut self.code.input];
+        for e in std::iter::once(&mut self.spec_ed)
+            .chain(self.data_eds.iter_mut())
+            .chain(code)
+        {
             if v.id_is(e.id) {
                 v.escape(e.id, &mut e.t, &mut e.p);
             }
@@ -366,7 +405,7 @@ impl App {
     }
 
     pub const fn running(&self) -> bool {
-        self.job.is_some() || self.stuki.running()
+        self.job.is_some() || self.stuki.running() || self.code.running()
     }
 
     pub fn tick(&mut self) {
@@ -389,6 +428,10 @@ impl App {
         self.stuki.poll();
         self.stuki
             .refresh_checks(&self.doc.spec, &self.doc.tests, false);
+        self.code.poll();
+        if self.tool == Tool::Code {
+            self.code_housekeeping();
+        }
         self.refresh_errors();
         if !self.status.is_empty() && self.status_at.elapsed() > Duration::from_secs(6) {
             self.status.clear();
@@ -476,6 +519,7 @@ impl App {
         self.saved = doc.clone();
         self.doc = doc;
         self.path = path;
+        self.code.reset(None);
         self.current = 0;
         self.results.clear();
         self.spec_diags.clear();
@@ -490,12 +534,12 @@ impl App {
 
     pub fn request(&mut self, p: Pending) {
         let dirty = match &p {
-            Pending::Quit => self.dirty() || self.stuki.dirty(),
+            Pending::Quit => self.project_dirty() || self.stuki.dirty(),
             Pending::Import(..) | Pending::New | Pending::Open | Pending::Load(_)
-                if self.tool == Tool::Spec
+                if self.spec_file()
                     && !matches!(&p, Pending::Load(f) if Kind::of(f) == Kind::Stuki) =>
             {
-                self.dirty()
+                self.project_dirty()
             }
             _ => self.stuki.dirty(),
         };
@@ -510,7 +554,7 @@ impl App {
         match p {
             Pending::Quit => self.quit = true,
             Pending::New => match self.tool {
-                Tool::Spec => {
+                Tool::Spec | Tool::Code => {
                     self.reset_doc(blank(), None);
                     self.set_focus(Pane::Spec);
                 }
@@ -520,12 +564,12 @@ impl App {
                 }
             },
             Pending::Open => {
-                let kind = if self.tool == Tool::Spec {
+                let kind = if self.spec_file() {
                     Kind::Spec
                 } else {
                     Kind::Stuki
                 };
-                let start = if self.tool == Tool::Spec {
+                let start = if self.spec_file() {
                     self.path.clone()
                 } else {
                     self.stuki.path.clone()
@@ -541,7 +585,9 @@ impl App {
                 if let Some(p) = program {
                     self.stuki.replace(p, None, false);
                 }
-                self.tool = Tool::Spec;
+                if self.tool != Tool::Code {
+                    self.tool = Tool::Spec;
+                }
                 self.say("Project read from the clipboard (not saved to a file yet)");
             }
             Pending::ImportStuki(p) => {
@@ -553,6 +599,7 @@ impl App {
                 self.stuki.replace(p, None, false);
                 self.say(msg);
             }
+            Pending::Convert => self.code_convert_now(),
         }
     }
 
@@ -571,10 +618,27 @@ impl App {
             }
             return;
         }
-        self.tool = Tool::Spec;
+        if self.tool != Tool::Code {
+            self.tool = Tool::Spec;
+        }
         match std::fs::read_to_string(path) {
             Ok(text) => {
-                let mut doc = from_sp(&text);
+                // the whole project: specification, tests, structograms and the C# program
+                let (project, problem) = match from_project(&text) {
+                    Ok(p) => (p, None),
+                    Err(e) => {
+                        let (doc, code) = (from_sp(&text), code_of(&text));
+                        (
+                            speci_local::file::Project {
+                                doc,
+                                stuki: None,
+                                code,
+                            },
+                            Some(e),
+                        )
+                    }
+                };
+                let mut doc = project.doc;
                 if doc.title.is_empty() {
                     doc.title = path
                         .file_stem()
@@ -582,7 +646,18 @@ impl App {
                         .unwrap_or_default();
                 }
                 self.reset_doc(doc, Some(path.to_path_buf()));
-                self.say(format!("Opened {}", path.display()));
+                self.code.reset(project.code);
+                let mut msg = format!("Opened {}", path.display());
+                match (project.stuki, problem) {
+                    (_, Some(e)) => msg += &format!(" ({e})"),
+                    // unsaved structograms are not thrown away by opening a file
+                    (Some(_), None) if self.stuki.dirty() => {
+                        msg += " (its structograms were not loaded: the Structogram tool has unsaved changes)";
+                    }
+                    (Some(p), None) => self.stuki.replace(p, None, true),
+                    (None, None) => {}
+                }
+                self.say(msg);
             }
             Err(e) => self.say(format!("Could not open {}: {e}", path.display())),
         }
@@ -592,7 +667,7 @@ impl App {
     pub fn open_path(&mut self, path: PathBuf) {
         if Kind::of(&path) == Kind::Stuki {
             self.tool = Tool::Stuki;
-        } else {
+        } else if self.tool != Tool::Code {
             self.tool = Tool::Spec;
         }
         self.request(Pending::Load(path));
@@ -611,7 +686,7 @@ impl App {
 
     pub fn save(&mut self, as_new: bool) {
         match self.tool {
-            Tool::Spec => {
+            Tool::Spec | Tool::Code => {
                 if let (Some(p), false) = (self.path.clone(), as_new) {
                     self.sync();
                     match self.renamed(&p) {
@@ -655,10 +730,16 @@ impl App {
     pub fn save_spec_to(&mut self, path: PathBuf) {
         self.sync();
         let path = Kind::Spec.with_ext(path);
-        match std::fs::write(&path, to_sp(&self.doc)) {
+        // the whole project; a file without structograms or program stays a plain `.sp`
+        let text = to_project(&self.doc, &self.stuki.program, &self.code.text());
+        match std::fs::write(&path, text) {
             Ok(()) => {
                 self.say(format!("Saved {}", path.display()));
                 self.saved = self.doc.clone();
+                self.code.mark_saved();
+                if self.stuki.path.is_none() {
+                    self.stuki.mark_saved();
+                }
                 self.path = Some(path);
             }
             Err(e) => self.say(format!("Could not save {}: {e}", path.display())),
@@ -684,6 +765,12 @@ impl App {
                 to_compact(&self.doc, &self.stuki.program)
             }
             Tool::Stuki => stformat::to_compact(&self.stuki.program),
+            Tool::Code => {
+                let text = self.code.text();
+                let how = clip::copy(&text);
+                self.code.status = format!("Copied the C# program via {how}");
+                return;
+            }
         };
         let how = clip::copy(&text);
         self.say(format!(
@@ -714,7 +801,9 @@ impl App {
         }
         match from_clipboard(text) {
             Ok(project) => {
-                self.tool = Tool::Spec;
+                if self.tool != Tool::Code {
+                    self.tool = Tool::Spec;
+                }
                 self.request(Pending::Import(project.doc, project.stuki));
             }
             Err(e) => self.say(e),
@@ -838,8 +927,9 @@ impl App {
     }
 
     fn next_error(&mut self, fwd: bool) {
-        let (ed, name) = match self.focus {
-            Pane::Data => (self.data_eds.get(self.current), "test data"),
+        let (ed, name) = match (self.tool, self.focus) {
+            (Tool::Code, _) => (Some(&self.code.ed), "program"),
+            (_, Pane::Data) => (self.data_eds.get(self.current), "test data"),
             _ => (Some(&self.spec_ed), "specification"),
         };
         let Some(ed) = ed else { return };
@@ -854,10 +944,10 @@ impl App {
         };
         match t.or_else(|| if fwd { lines.first() } else { lines.last() }) {
             Some(&l) => {
-                let e = if self.focus == Pane::Data {
-                    self.data()
+                let e = if self.tool == Tool::Code {
+                    &mut self.code.ed
                 } else {
-                    &mut self.spec_ed
+                    self.search_editor()
                 };
                 e.goto(l, 1);
             }
@@ -882,6 +972,13 @@ impl App {
                     e.goto(n, 1);
                 }
                 Tool::Stuki => {}
+                Tool::Code => {
+                    let e = match self.code.focus {
+                        CodePane::Input => &mut self.code.input,
+                        _ => &mut self.code.ed,
+                    };
+                    e.goto(n, 1);
+                }
             }
             return;
         }
@@ -892,21 +989,21 @@ impl App {
             "w" | "write" | "up" | "update" => {
                 if arg.is_empty() {
                     self.save(false);
-                } else if self.tool == Tool::Spec {
+                } else if self.spec_file() {
                     self.save_spec_to(PathBuf::from(arg));
                 } else {
                     self.save_stuki_to(PathBuf::from(arg));
                 }
             }
             "wq" | "x" | "xit" | "wqa" | "xa" => {
-                if arg.is_empty() && self.path.is_none() && self.tool == Tool::Spec {
+                if arg.is_empty() && self.path.is_none() && self.spec_file() {
                     self.save(false);
                     return;
                 }
-                if self.tool == Tool::Spec || self.stuki.path.is_some() {
+                if self.spec_file() || self.stuki.path.is_some() {
                     self.save(false);
                 }
-                if !self.dirty() && !self.stuki.dirty() {
+                if !self.project_dirty() && !self.stuki.dirty() {
                     self.quit = true;
                 } else {
                     self.say("Not everything could be saved: use :w name, or :q! to discard");
@@ -915,7 +1012,7 @@ impl App {
             "sav" | "saveas" => {
                 if arg.is_empty() {
                     self.save(true);
-                } else if self.tool == Tool::Spec {
+                } else if self.spec_file() {
                     self.save_spec_to(PathBuf::from(arg));
                 } else {
                     self.save_stuki_to(PathBuf::from(arg));
@@ -937,6 +1034,7 @@ impl App {
                         .refresh_checks(&self.doc.spec, &self.doc.tests, true);
                     self.say("Running the structograms on the test cases");
                 }
+                Tool::Code => self.code_run(),
             },
             "set" => self.set_option(arg),
             "auto" => self.set_option("auto"),
@@ -959,6 +1057,28 @@ impl App {
             }
             "spec" | "specification" => self.tool = Tool::Spec,
             "stuki" | "st" => self.tool = Tool::Stuki,
+            "code" | "cs" | "csharp" | "c#" => self.tool = Tool::Code,
+            "convert" | "conv" => {
+                self.tool = Tool::Code;
+                self.code_convert();
+            }
+            "mode" => match arg.chars().next() {
+                Some('t' | 'T') => self.code_set_source(Source::Test),
+                Some('c' | 'C') => self.code_set_source(Source::Console),
+                _ => self.code_set_source(self.code.source.other()),
+            },
+            "stop" => {
+                self.code.stop();
+                self.code.status = "Stopping…".into();
+            }
+            "fill" => self.code_fill(),
+            "notes" => self.code_notes(),
+            "carbon" => self.code_carbon(arg.starts_with('o')),
+            "send" => {
+                if !self.code.send_line(arg) {
+                    self.say("The program is not running (or not taking input)");
+                }
+            }
             "copy" | "yank" => self.copy_project(),
             "paste" => self.paste_project(),
             "fromspec" => self.build_from_spec(),
@@ -1053,6 +1173,18 @@ impl App {
         if !self.vim.in_insert() && (t.starts_with("SPECI1:") || t.starts_with("STUKI1:")) {
             return self.import_text(text);
         }
+        if self.tool == Tool::Code {
+            if self.code.focus == CodePane::Output {
+                return self.import_text(text);
+            }
+            let e = if self.code.focus == CodePane::Input {
+                &mut self.code.input
+            } else {
+                &mut self.code.ed
+            };
+            e.paste(&mut self.vim, text);
+            return;
+        }
         if self.focus == Pane::Eval {
             return self.import_text(text);
         }
@@ -1079,15 +1211,7 @@ impl App {
             (KeyCode::Char('s'), true) => return self.save(false),
             (KeyCode::F(5), _) => return self.command("run"),
             (KeyCode::F(1), _) => return self.overlay = Overlay::Help(0),
-            (KeyCode::F(2), _) => {
-                self.leave_insert();
-                self.tool = if self.tool == Tool::Spec {
-                    Tool::Stuki
-                } else {
-                    Tool::Spec
-                };
-                return;
-            }
+            (KeyCode::F(2), _) => return self.switch_tool(true),
             (KeyCode::Char('q'), true) => return self.request(Pending::Quit),
             _ => {}
         }
@@ -1108,6 +1232,9 @@ impl App {
                 Pane::Spec | Pane::Data => !self.vim.pending() && !self.vim.is_visual(),
             },
             Tool::Stuki => self.stuki.keys.is_empty(),
+            Tool::Code => {
+                self.code.focus == CodePane::Output || !self.vim.pending() && !self.vim.is_visual()
+            }
         };
         if ctrl && k.code == KeyCode::Char('w') && idle {
             self.ctrl_w = true;
@@ -1125,17 +1252,20 @@ impl App {
                     self.leader = true;
                     self.say(match self.tool {
                         Tool::Spec => "SPC: r run  f →structogram  t/d test  s scaffold  a auto  v view  w save  o open  n new  y copy  p paste  q quit  ? help",
-                        Tool::Stuki => "SPC: f build from spec  c copy picture  w save  o open  n new  y copy  p paste  1/2 tool  q quit  ? help",
+                        Tool::Stuki => "SPC: f build from spec  c copy picture  w save  o open  n new  y copy  p paste  1/2/3 tool  q quit  ? help",
+                        Tool::Code => "SPC: f from spec+stuki  m mode  r run  x stop  i fill input  b/B carbon  y copy  w save  1/2/3 tool  q quit  ? help",
                     });
                     return;
                 }
                 KeyCode::Char('?') => return self.overlay = Overlay::Help(0),
-                KeyCode::Char(c @ (']' | '[')) if self.tool == Tool::Spec => {
+                KeyCode::Char(c @ (']' | '[')) if self.spec_file() => {
                     self.bracket = Some(c);
                     return;
                 }
                 KeyCode::Tab if self.tool == Tool::Spec => return self.cycle_pane(true),
                 KeyCode::BackTab if self.tool == Tool::Spec => return self.cycle_pane(false),
+                KeyCode::Tab if self.tool == Tool::Code => return self.code_cycle(true),
+                KeyCode::BackTab if self.tool == Tool::Code => return self.code_cycle(false),
                 KeyCode::Tab | KeyCode::BackTab => {
                     self.tool = Tool::Spec;
                     return;
@@ -1162,22 +1292,25 @@ impl App {
             }
         }
         // `gt` / `gT` switch tools
-        if self.tool == Tool::Spec
-            && self.focus != Pane::Eval
+        let editing_here = match self.tool {
+            Tool::Spec => self.focus != Pane::Eval,
+            Tool::Code => self.code.focus != CodePane::Output,
+            Tool::Stuki => false,
+        };
+        if editing_here
             && self.vim.pending_keys() == "g"
             && let KeyCode::Char(c @ ('t' | 'T')) = k.code
         {
-            let _ = c;
             self.pane_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-            self.tool = Tool::Stuki;
+            self.switch_tool(c == 't');
             return;
         }
         if self.tool == Tool::Stuki
             && self.stuki.keys == ['g']
-            && let KeyCode::Char('t' | 'T') = k.code
+            && let KeyCode::Char(c @ ('t' | 'T')) = k.code
         {
             self.stuki.keys.clear();
-            self.tool = Tool::Spec;
+            self.switch_tool(c == 't');
             return;
         }
         self.pane_key(k);
@@ -1190,8 +1323,17 @@ impl App {
         self.set_focus(order[n]);
     }
 
+    /// Next (or previous) tool.
+    fn switch_tool(&mut self, fwd: bool) {
+        self.leave_insert();
+        self.tool = self.tool.step(fwd);
+    }
+
     fn window_key(&mut self, k: KeyEvent) {
         let KeyCode::Char(c) = k.code else { return };
+        if self.tool == Tool::Code {
+            return self.code_window_key(c);
+        }
         match c {
             'h' | 'H' => {
                 let p = match self.focus {
@@ -1222,14 +1364,7 @@ impl App {
                     "Zoom off"
                 });
             }
-            't' => {
-                self.leave_insert();
-                self.tool = if self.tool == Tool::Spec {
-                    Tool::Stuki
-                } else {
-                    Tool::Spec
-                };
-            }
+            't' => self.switch_tool(true),
             _ => {}
         }
     }
@@ -1239,6 +1374,11 @@ impl App {
         let KeyCode::Char(c) = k.code else { return };
         match c {
             'r' => self.command("run"),
+            'x' if self.tool == Tool::Code => self.command("stop"),
+            'm' if self.tool == Tool::Code => self.command("mode"),
+            'i' if self.tool == Tool::Code => self.code_fill(),
+            'b' if self.tool == Tool::Code => self.code_carbon(false),
+            'B' if self.tool == Tool::Code => self.code_carbon(true),
             'w' => self.save(false),
             'W' => self.save(true),
             'o' => self.request(Pending::Open),
@@ -1255,7 +1395,10 @@ impl App {
             'z' => self.zoom = !self.zoom,
             '1' => self.tool = Tool::Spec,
             '2' => self.tool = Tool::Stuki,
+            '3' => self.tool = Tool::Code,
+            'f' if self.tool == Tool::Code => self.code_convert(),
             'f' => self.build_from_spec(),
+            'c' if self.tool == Tool::Code => self.copy_project(),
             'c' | 'e' => self.export_text(None),
             'v' if self.tool == Tool::Spec => {
                 self.view = match self.view {
@@ -1283,6 +1426,7 @@ impl App {
                     self.open_line(LineKind::Command);
                 }
             }
+            Tool::Code => self.code_key(k),
             Tool::Spec => match self.focus {
                 Pane::Eval => self.eval_key(k),
                 p => {
@@ -1417,11 +1561,16 @@ impl App {
                     self.overlay = Overlay::Paste;
                 }
             }
+            Overlay::Confirm(Pending::Convert) => {
+                if matches!(k.code, KeyCode::Char('y' | 'r')) {
+                    self.code_convert_now();
+                }
+            }
             Overlay::Confirm(p) => match k.code {
                 KeyCode::Char('s' | 'y') => {
                     let saved = match (&p, self.tool) {
                         (Pending::Quit, _) => {
-                            if self.dirty() && self.path.is_some() {
+                            if self.project_dirty() && self.path.is_some() {
                                 self.save(false);
                             }
                             if self.stuki.dirty() && self.stuki.path.is_some() {
@@ -1429,15 +1578,15 @@ impl App {
                                 self.save(false);
                                 self.tool = t;
                             }
-                            !self.dirty() && !self.stuki.dirty()
+                            !self.project_dirty() && !self.stuki.dirty()
                         }
-                        (_, Tool::Spec)
+                        (_, Tool::Spec | Tool::Code)
                             if !matches!(&p, Pending::ImportStuki(_) | Pending::FromSpec(..)) =>
                         {
                             if self.path.is_some() {
                                 self.save(false);
                             }
-                            !self.dirty()
+                            !self.project_dirty()
                         }
                         _ => {
                             if self.stuki.path.is_some() {
@@ -1487,12 +1636,7 @@ impl App {
                         }
                         LineKind::Search => {
                             if !text.is_empty() {
-                                let e = if self.focus == Pane::Data {
-                                    self.data()
-                                } else {
-                                    &mut self.spec_ed
-                                };
-                                e.set_search(&text, true);
+                                self.search_editor().set_search(&text, true);
                             }
                         }
                     }

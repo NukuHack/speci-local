@@ -48,6 +48,7 @@
 mod app;
 mod ascii;
 mod clip;
+mod code;
 mod editor;
 mod files;
 mod highlight;
@@ -72,7 +73,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-const USAGE: &str = "speci-tui: specifications and structograms in the terminal
+const USAGE: &str = "speci-tui: specifications, structograms and C# in the terminal
 
 Usage: speci-tui [OPTIONS] [FILE.sp | FILE.st]
 
@@ -152,7 +153,7 @@ fn main() -> io::Result<()> {
                 term = Terminal::new(CrosstermBackend::new(io::stdout()))?;
             }
             term.draw(|f| ui::draw(f, &mut app))?;
-            let want_bar = matches!(app.tool, app::Tool::Spec) && app.typing()
+            let want_bar = matches!(app.tool, app::Tool::Spec | app::Tool::Code) && app.typing()
                 || matches!(app.tool, app::Tool::Stuki) && app.stuki.edit.is_some();
             if want_bar != bar {
                 bar = want_bar;

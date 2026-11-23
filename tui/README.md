@@ -1,7 +1,8 @@
 # speci-tui
 
 The terminal edition of speci-local: the specification editor, the test cases, the evaluation
-(results, step-by-step stepper) and the structogram editor, **all driven from the keyboard** with
+(results, step-by-step stepper), the structogram editor and the **C# code tool** (write the
+program from the specification and the structograms, run it with dotnet), **all driven from the keyboard** with
 vim-style keys. It uses the same engine as the window app, so `.sp` / `.st` files and copied
 project lines are interchangeable between the two.
 
@@ -36,7 +37,7 @@ The mouse is never needed (and never captured, so you can still select text with
 |---|---|
 | `Tab` / `Shift-Tab`, `Ctrl-w h/l/w/1/2/3` | move between panes |
 | `Ctrl-w o` | zoom / unzoom the pane |
-| `gt` `gT` `F2` `Ctrl-w t` | Specification ⇄ Structogram |
+| `gt` `gT` `F2` `Ctrl-w t` | Specification → Structogram → Code → … |
 | `]t` `[t` | next / previous test case |
 | `]e` `[e` | next / previous error line |
 | `Space r` (`F5`) | evaluate now |
@@ -44,7 +45,8 @@ The mouse is never needed (and never captured, so you can still select text with
 | `Space o` `n` `q` | open, new, quit |
 | `Space y` / `p` | copy / paste the whole project as one line |
 | `Space t` `d` `s` | new test case, delete test case, insert variable names |
-| `Space f` (`:fromspec`) | **convert the specification into structograms** |
+| `Space f` (`:fromspec`) | **convert the specification into structograms** (in the Code tool: into a C# program) |
+| `Space m` `r` `x` `i` `b` | Code tool: mode test/console, run, stop, fill input, carbon link |
 | `Space a` / `T` | auto-evaluation / light-dark colors |
 | `:` | command line: `:w :wq :q :q! :e :run :tnew :tdel :t N :set light` … |
 
@@ -54,6 +56,19 @@ mode `Ctrl-n`/`Ctrl-p` complete headers, `MACROS`, keywords and words from the t
 `exists`, `leq`, `geq`, `neq` turn into symbols), `Ctrl-k` starts a digraph
 (`Ctrl-k (-` → ∈, `FA` → ∀, `TE` → ∃, `!=` → ≠, `=<` → ≤, `>=` → ≥), `Alt-1…6` types ∈ ∀ ∃ ≠ ≤ ≥,
 and typing `<=`, `>=`, `!=` converts them as in the window app.
+
+**Code tool** (`Space 3`, `:code`): one C# editor (vim keys, highlighting, braces-aware indent).
+`Space f` writes the program from the specification and the structograms (the ones of the
+Structogram tool, or what *From spec* would build when it is empty); a program you edited is never
+replaced without asking. `Space m` chooses whether the program contains the selected test case's
+values (`test values`, it prints `name = value`) or reads its input from the console (the input
+box, `Space i` fills it from the test case) and prints plain values. `Space r` / `F5` builds
+and runs it with the `dotnet` on the `PATH` (Linux, macOS, Windows), `Space x` stops it; compile
+errors mark their lines (`Enter` in the output jumps to the first, `]e` / `[e` walk them). In
+the console mode the **expected output** of the test case is shown under the input and, after a
+run, the output is compared with it. `Space b` copies a carbon.now.sh link that shows the program
+as an image (`B` opens it in the browser). The program is saved in the `.sp` file together with
+the specification, the tests and the structograms.
 
 **Evaluation pane**: results with the explanation of every problem (`Enter` jumps to it in the
 editor), the stepper (`h/l` step through the evaluation, the evaluated part is highlighted) and a

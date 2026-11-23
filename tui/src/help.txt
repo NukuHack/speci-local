@@ -3,8 +3,8 @@ Tab / Shift-Tab  ·  next / previous pane (when not typing)
 Ctrl-w h/l/w/W  ·  move between panes (like vim windows)
 Ctrl-w 1/2/3  ·  jump to a pane
 Ctrl-w o  ·  zoom the pane (again to restore)
-Ctrl-w t  ·  switch between Specification and Structogram
-F2 / gt / gT  ·  switch tool
+Ctrl-w t  ·  next tool (Specification, Structogram, Code)
+F2 / gt / gT  ·  next / previous tool
 F1 / ?  ·  this help
 Esc  ·  back to a calm state
 
@@ -16,12 +16,12 @@ Space y  ·  copy the whole project as one line
 Space p  ·  paste a project line (or paste with the terminal)
 Space T  ·  light / dark colors
 Space A  ·  ASCII mode on / off (:set ascii | :set utf8, or start with --ascii)
-Space 1 / 2  ·  Specification / Structogram
+Space 1 / 2 / 3  ·  Specification / Structogram / Code
 Space z  ·  zoom
 
 # Command line (:) @general
 :w [file]  :wq  :q  :q!  :e file  :new  :saveas file
-:set light|dark  :set ascii|utf8  :zoom  :help  :spec  :stuki
+:set light|dark  :set ascii|utf8  :zoom  :help  :spec  :stuki  :code
 :copy  :paste  :N  ·  go to line N
 Up/Down  ·  command history
 
@@ -40,6 +40,24 @@ Space v  ·  Evaluation view: results / stepper / step list
 ]t / [t  ·  next / previous test case
 ]e / [e  ·  next / previous error line
 :run  :set auto|noauto  :tnew  :tdel  :tnext  :tprev  :t N  :scaffold  :view results|stepper|steps
+
+# C# code @code
+The third tool is one C# editor (vim keys, highlighting, the indentation follows the braces).
+Space f  ·  write the program from the specification and the structograms (asks first when
+            you edited it; if the Structogram tool is empty the From spec ones are used)
+Space m  ·  the program uses the test case's values  /  reads them from the console
+Space r (F5)  ·  build and run it with dotnet from the PATH;  Space x stops it
+Space i  ·  console mode: fill the input box from the test case
+Space y or c  ·  copy the program;  Space b / B  ·  copy / open a carbon.now.sh link
+]t / [t  ·  test case the program is made for;  ]e / [e  ·  next compiler error
+Tab / Shift-Tab  ·  program, console input (console mode only), output
+Output pane: j k Ctrl-d Ctrl-u gg G scroll,  Enter jumps to the first compile error
+Console mode while the program runs: Enter on a line of the input box sends it (:send text too)
+:convert  :mode test|console  :run  :stop  :fill  :carbon [open]  :send text  :notes
+:notes  ·  what the conversion could not translate (the // TODO lines) or guessed
+Under the input box the test case's expected output is shown, and after a run
+the output is compared with it (matches / differs).
+It is saved in the .sp file with the specification and the structograms.
 
 # Editing text (vim keys) @editing
 i a I A o O  ·  insert
@@ -120,4 +138,5 @@ Pasting a copied project line outside insert mode imports it.
 
 # About @about
 The same engine as the window app: files (.sp, .st) and copied project lines are
-interchangeable with it.  Close this help with q or Esc.
+interchangeable with it. An .sp file holds the specification, the tests, the structograms
+and the C# program.  Close this help with q or Esc.

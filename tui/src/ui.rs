@@ -2,6 +2,7 @@
 
 use crate::app::{App, LineKind, Overlay, Pane, Tool, View};
 use crate::ascii;
+use crate::code::{CodePane, Source};
 use crate::input::Input;
 use crate::nslayout::{self, Focus, Tag, wrap};
 use crate::stuki::Menu;
@@ -91,6 +92,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     match app.tool {
         Tool::Spec => draw_spec_tool(f, app, body),
         Tool::Stuki => draw_stuki_tool(f, app, body),
+        Tool::Code => draw_code_tool(f, app, body),
     }
     draw_status(f, app, bottom);
     draw_overlay(f, app, area);
@@ -114,11 +116,13 @@ fn draw_tabs(f: &mut Frame<'_>, app: &App, area: Rect) {
     for (t, label) in [
         (Tool::Spec, "1 Specification"),
         (Tool::Stuki, "2 Structogram"),
+        (Tool::Code, "3 Code"),
     ] {
         let on = app.tool == t;
         let dirty = match t {
             Tool::Spec => app.dirty(),
             Tool::Stuki => app.stuki.dirty(),
+            Tool::Code => app.code.dirty(),
         };
         let st = if on {
             Style::default()
@@ -135,7 +139,7 @@ fn draw_tabs(f: &mut Frame<'_>, app: &App, area: Rect) {
         spans.push(Span::raw(" "));
     }
     let title = match app.tool {
-        Tool::Spec => {
+        Tool::Spec | Tool::Code => {
             let file = app
                 .path
                 .as_ref()
@@ -690,6 +694,205 @@ fn draw_eval(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     }
 }
 
+// ------------------------------------------------------------------ code tool
+
+/// The program, the console input, the expected output and the output.
+fn code_rects(area: Rect, app: &App) -> [Option<Rect>; 4] {
+    let console = app.code.source == Source::Console;
+    let single = app.zoom || area.height < 14 || area.width < 70;
+    let input_column = |r: Rect| -> [Rect; 2] {
+        Layout::vertical([Constraint::Percentage(55), Constraint::Percentage(45)]).areas(r)
+    };
+    if single {
+        let mut r = [None; 4];
+        match app.code.focus {
+            CodePane::Editor => r[0] = Some(area),
+            CodePane::Input => {
+                let [inp, exp] = input_column(area);
+                (r[1], r[2]) = (Some(inp), Some(exp));
+            }
+            CodePane::Output => r[3] = Some(area),
+        }
+        return r;
+    }
+    let [top, bottom] =
+        Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(area);
+    if console {
+        let [out, side] =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .areas(bottom);
+        let [inp, exp] = input_column(side);
+        [Some(top), Some(inp), Some(exp), Some(out)]
+    } else {
+        [Some(top), None, None, Some(bottom)]
+    }
+}
+
+fn draw_code_tool(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let rects = code_rects(area, app);
+    let th = app.theme;
+    let single = rects.iter().filter(|r| r.is_some()).count() <= 2
+        && (app.zoom || area.height < 14 || area.width < 70);
+    let console = app.code.source == Source::Console;
+    let overlay_none = matches!(app.overlay, Overlay::None | Overlay::Line(..));
+    let nav = |p: CodePane| -> String {
+        let all: Vec<(CodePane, &str, &str)> = [
+            (CodePane::Editor, "1 Code", "1 C# program"),
+            (CodePane::Input, "2 Input", "2 Console input"),
+            (CodePane::Output, "3 Output", "3 Output"),
+        ]
+        .into_iter()
+        .filter(|(q, ..)| console || *q != CodePane::Input)
+        .collect();
+        if single {
+            all.iter()
+                .map(|(q, short, _)| {
+                    if *q == p {
+                        format!("[{short}]")
+                    } else {
+                        (*short).to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            all.iter()
+                .find(|(q, ..)| *q == p)
+                .map(|(_, _, long)| (*long).to_string())
+                .unwrap_or_default()
+        }
+    };
+    let spec = app.doc.spec.clone();
+    let test = app.doc.tests.get(app.current).cloned().unwrap_or_default();
+
+    if let Some(r) = rects[0] {
+        let focused = app.code.focus == CodePane::Editor;
+        let (l, c) = app.code.ed.line_col();
+        let mark = if app.code.dirty() { " ●" } else { "" };
+        let right = if single {
+            format!("{l}:{c}")
+        } else {
+            format!(
+                "{} · test {}/{} · {l}:{c}",
+                app.code.source.label(),
+                app.current + 1,
+                app.doc.tests.len().max(1)
+            )
+        };
+        let blk = pane_block(
+            &format!("{}{mark}", nav(CodePane::Editor)),
+            &right,
+            focused,
+            &th,
+        );
+        let inner = blk.inner(r);
+        f.render_widget(blk, r);
+        app.code
+            .ed
+            .draw(f.buffer_mut(), inner, &th, &app.vim, focused);
+        if focused
+            && overlay_none
+            && let Some(p) = app.code.ed.cursor_xy
+        {
+            f.set_cursor_position(p);
+        }
+    }
+    if let Some(r) = rects[1] {
+        let focused = app.code.focus == CodePane::Input;
+        let (l, c) = app.code.input.line_col();
+        let blk = pane_block(&nav(CodePane::Input), &format!("{l}:{c}"), focused, &th);
+        let inner = blk.inner(r);
+        f.render_widget(blk, r);
+        app.code
+            .input
+            .draw(f.buffer_mut(), inner, &th, &app.vim, focused);
+        if focused
+            && overlay_none
+            && let Some(p) = app.code.input.cursor_xy
+        {
+            f.set_cursor_position(p);
+        }
+    }
+    let verdict = app.code.verdict(&spec, &test);
+    if let Some(r) = rects[2] {
+        let (right, col) = match verdict {
+            Some(true) => ("✔ matches", th.ok),
+            Some(false) => ("✘ differs", th.err),
+            None => ("", th.dim),
+        };
+        let title = format!("Expected output (test {})", app.current + 1);
+        let blk = pane_block(&title, "", false, &th);
+        let inner = blk.inner(r);
+        f.render_widget(blk, r);
+        // the verdict in its own color, over the right end of the top border
+        let chip = format!(" {right} ");
+        let w = chip.chars().count() as u16;
+        if !right.is_empty() && w + 2 < r.width {
+            let at = Rect::new(r.right() - w - 1, r.y, w, 1);
+            f.render_widget(
+                Paragraph::new(Span::styled(
+                    chip,
+                    Style::default().fg(col).add_modifier(Modifier::BOLD),
+                )),
+                at,
+            );
+        }
+        let (text, style) = match app.code.expected(&spec, &test) {
+            Ok(t) => (t, th.text()),
+            Err(e) => (e, th.dim()),
+        };
+        let lines: Vec<Ln> = text
+            .lines()
+            .map(|l| Line::from(Span::styled(l.to_string(), style)))
+            .collect();
+        f.render_widget(Paragraph::new(lines), inner);
+    }
+    if let Some(r) = rects[3] {
+        let focused = app.code.focus == CodePane::Output;
+        let right = match (app.code.run_status.as_str(), verdict) {
+            ("", _) => String::new(),
+            (s, Some(true)) => format!("{s} · ✔ matches"),
+            (s, Some(false)) => format!("{s} · ✘ differs"),
+            (s, None) => s.to_string(),
+        };
+        let blk = pane_block(&nav(CodePane::Output), &right, focused, &th);
+        let inner = blk.inner(r);
+        f.render_widget(blk, r);
+        let h = inner.height as usize;
+        let lines: Vec<&str> = if app.code.output.is_empty() {
+            vec![]
+        } else {
+            app.code.output.lines().collect()
+        };
+        app.code.out_h = h;
+        app.code.out_len = lines.len();
+        let last = lines.len().saturating_sub(h.max(1));
+        // a running program: follow what it prints, unless you are reading the output
+        if app.code.running() && !focused {
+            app.code.out_scroll = last;
+        }
+        app.code.out_scroll = app.code.out_scroll.min(lines.len().saturating_sub(1));
+        let shown: Vec<Ln> = if lines.is_empty() {
+            vec![Line::from(Span::styled(
+                if console {
+                    "Nothing printed yet. Space r runs the program."
+                } else {
+                    "Nothing printed yet. Space r (or F5) runs the program."
+                },
+                th.dim(),
+            ))]
+        } else {
+            lines
+                .iter()
+                .skip(app.code.out_scroll)
+                .take(h)
+                .map(|l| Line::from(Span::styled((*l).to_string(), th.text())))
+                .collect()
+        };
+        f.render_widget(Paragraph::new(shown), inner);
+    }
+}
+
 // ------------------------------------------------------------------ structogram tool
 
 fn draw_stuki_tool(f: &mut Frame<'_>, app: &mut App, area: Rect) {
@@ -880,6 +1083,18 @@ fn mode_chip(app: &App) -> (String, Color) {
                 (" STRUCT ".into(), th.accent)
             }
         }
+        Tool::Code => {
+            if app.code.focus == CodePane::Output {
+                return (" VIEW ".into(), th.accent);
+            }
+            let l = app.vim.mode().label();
+            let c = match l {
+                "INSERT" => th.ok,
+                "VISUAL" | "V-LINE" => th.warn,
+                _ => th.accent,
+            };
+            (format!(" {l} "), c)
+        }
         Tool::Spec => {
             if app.focus == Pane::Eval {
                 return (" VIEW ".into(), th.accent);
@@ -931,6 +1146,8 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
     let pending = match app.tool {
         Tool::Spec => app.vim.pending_keys(),
         Tool::Stuki => app.stuki.keys.iter().collect(),
+        Tool::Code if app.code.focus != CodePane::Output => app.vim.pending_keys(),
+        Tool::Code => String::new(),
     };
     let pending = if app.ctrl_w {
         "^W".to_string()
@@ -947,6 +1164,8 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
         app.status.clone()
     } else if app.tool == Tool::Stuki && !app.stuki.status.is_empty() {
         app.stuki.status.clone()
+    } else if app.tool == Tool::Code && !app.code.status.is_empty() {
+        app.code.status.clone()
     } else {
         String::new()
     };
@@ -967,6 +1186,7 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
             ),
             _ => String::new(),
         },
+        Tool::Code => format!("reads {}  ", app.code.source.label()),
     };
     let lw: usize = spans.iter().map(Span::width).sum();
     let rw = right.chars().count();
@@ -986,7 +1206,13 @@ pub const HELP: &str = include_str!("help.txt");
 
 fn draw_overlay(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let th = app.theme;
-    let (tool, focus) = (app.tool, app.focus);
+    // the Code tool's panes count as the editing panes, its output as the viewing one
+    let focus = match app.tool {
+        Tool::Code if app.code.focus == CodePane::Output => Pane::Eval,
+        Tool::Code => Pane::Spec,
+        _ => app.focus,
+    };
+    let tool = app.tool;
     match &mut app.overlay {
         Overlay::None | Overlay::Line(..) => {}
         Overlay::Help(scroll) => {
@@ -1009,6 +1235,27 @@ fn draw_overlay(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             f.render_widget(blk, r);
             let t = "No system clipboard tool was found.\n\nPaste the copied project line now with your\nterminal's paste shortcut (Ctrl+Shift+V,\nCmd+V or right click).";
             f.render_widget(Paragraph::new(t).style(th.text()), inner);
+        }
+        Overlay::Confirm(crate::app::Pending::Convert) => {
+            let r = centered(area, 66, 7);
+            f.render_widget(Clear, r);
+            let blk = pane_block("Replace the program?", "", true, &th);
+            let inner = blk.inner(r);
+            f.render_widget(blk, r);
+            let lines = vec![
+                Line::from(Span::styled(
+                    "The program was edited. Writing it again replaces your changes.",
+                    th.text(),
+                )),
+                Line::default(),
+                Line::from(vec![
+                    Span::styled(" y ", th.selected()),
+                    Span::styled(" replace   ", th.text()),
+                    Span::styled(" Esc ", th.selected()),
+                    Span::styled(" keep my program", th.text()),
+                ]),
+            ];
+            f.render_widget(Paragraph::new(lines), inner);
         }
         Overlay::Confirm(p) => {
             let what = match p {
@@ -1136,14 +1383,14 @@ fn draw_overlay(f: &mut Frame<'_>, app: &mut App, area: Rect) {
 
 /// How early a help section comes, depending on where the user is.
 fn help_priority(tag: &str, tool: Tool, focus: Pane) -> u8 {
-    let editing_here = tool == Tool::Spec && focus != Pane::Eval;
+    let editing_here = tool != Tool::Stuki && focus != Pane::Eval;
     let eval_here = tool == Tool::Spec && focus == Pane::Eval;
     match (tag, tool) {
         ("general", _) => 0,
-        ("spec", Tool::Spec) | ("stuki", Tool::Stuki) => 1,
+        ("spec", Tool::Spec) | ("stuki", Tool::Stuki) | ("code", Tool::Code) => 1,
         ("editing", _) if editing_here => 1,
         ("eval", _) if eval_here => 1,
-        ("editing" | "eval", Tool::Spec) => 2,
+        ("editing" | "eval", Tool::Spec) | ("editing", Tool::Code) => 2,
         ("files", _) => 7,
         ("about", _) => 9,
         _ => 5,

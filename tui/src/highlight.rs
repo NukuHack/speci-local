@@ -1,4 +1,4 @@
-//! Syntax highlighting for specifications and YAML test data: one [`Tok`] per character.
+//! Syntax highlighting for specifications, YAML test data and C#: one [`Tok`] per character.
 
 use crate::theme::Theme;
 use ratatui::style::{Color, Style};
@@ -195,6 +195,127 @@ pub fn data(text: &[char]) -> Vec<Tok> {
             push(&mut out, &rest[..n], tok);
             rest = &rest[n..];
         }
+    }
+    out
+}
+
+const CS_KEYWORDS: &[&str] = &[
+    "using",
+    "namespace",
+    "class",
+    "struct",
+    "enum",
+    "static",
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "readonly",
+    "const",
+    "new",
+    "return",
+    "if",
+    "else",
+    "for",
+    "foreach",
+    "while",
+    "do",
+    "switch",
+    "case",
+    "break",
+    "continue",
+    "default",
+    "in",
+    "out",
+    "ref",
+    "is",
+    "as",
+    "true",
+    "false",
+    "null",
+    "this",
+    "var",
+    "void",
+    "try",
+    "catch",
+    "finally",
+    "throw",
+    "get",
+    "set",
+];
+const CS_TYPES: &[&str] = &[
+    "int", "long", "double", "float", "bool", "string", "char", "byte", "short", "uint", "ulong",
+    "decimal", "object",
+];
+
+/// Length of a quoted text starting at `rest` (`"` or `\'`), honouring `\` escapes; an unclosed
+/// text ends with its line.
+fn quoted_len(rest: &str) -> usize {
+    let quote = rest.chars().next().unwrap_or('"');
+    let mut escaped = false;
+    for (i, c) in rest.char_indices().skip(1) {
+        if c == '\n' {
+            return i;
+        }
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == quote {
+            return i + 1;
+        }
+    }
+    rest.len()
+}
+
+pub fn csharp(text: &[char]) -> Vec<Tok> {
+    let text: String = text.iter().collect();
+    let mut out = Vec::with_capacity(text.len());
+    let mut rest = text.as_str();
+    // the word before: `class Name`, `struct Name`, `new Name` name a type
+    let mut after_type_kw = false;
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    while let Some(c) = rest.chars().next() {
+        let (n, tok) = if rest.starts_with("//") {
+            (rest.find('\n').unwrap_or(rest.len()), Tok::Comment)
+        } else if rest.starts_with("/*") {
+            (rest.find("*/").map_or(rest.len(), |k| k + 2), Tok::Comment)
+        } else if c == '"' || c == '\'' {
+            (quoted_len(rest), Tok::Str)
+        } else if c.is_ascii_digit() {
+            (
+                take_while(rest, |c| c.is_ascii_alphanumeric() || c == '.'),
+                Tok::Number,
+            )
+        } else if ident(c) || c == '@' {
+            let n = c.len_utf8() + take_while(&rest[c.len_utf8()..], ident);
+            let word = rest[..n].trim_start_matches('@');
+            let next = rest[n..].trim_start_matches([' ', '\t']).chars().next();
+            let tok = if CS_KEYWORDS.contains(&word) {
+                Tok::Keyword
+            } else if CS_TYPES.contains(&word) || after_type_kw {
+                Tok::Ty
+            } else if next == Some('(') {
+                Tok::Func
+            } else if word.starts_with(char::is_uppercase) && matches!(next, Some('.' | ' ')) {
+                Tok::Ty
+            } else {
+                Tok::Text
+            };
+            after_type_kw = matches!(word, "class" | "struct" | "enum" | "new");
+            (n, tok)
+        } else if c.is_whitespace() {
+            (take_while(rest, char::is_whitespace), Tok::Text)
+        } else if "{}()[];,.".contains(c) {
+            (c.len_utf8(), Tok::Punct)
+        } else {
+            (c.len_utf8(), Tok::Op)
+        };
+        if !c.is_whitespace() && !ident(c) && c != '@' {
+            after_type_kw = false;
+        }
+        push(&mut out, &rest[..n], tok);
+        rest = &rest[n..];
     }
     out
 }

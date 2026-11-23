@@ -114,10 +114,16 @@ fn every_size_renders_without_panicking() {
         (30, 8),
         (21, 6),
     ] {
-        for tool in [Tool::Spec, Tool::Stuki] {
+        for tool in [Tool::Spec, Tool::Stuki, Tool::Code] {
             let mut a = fresh();
             a.tool = tool;
             let _ = render(&mut a, w, h);
+            if tool == Tool::Code {
+                keys(&mut a, "<Space>m");
+                let _ = render(&mut a, w, h);
+                keys(&mut a, "<Tab>");
+                let _ = render(&mut a, w, h);
+            }
             keys(&mut a, "<C-w>l");
             let _ = render(&mut a, w, h);
             keys(&mut a, "<C-w>l?");
@@ -387,6 +393,8 @@ fn leader_hint_depends_on_the_tool() {
     assert!(a.status.contains("f →structogram") && a.status.contains("scaffold"));
     keys(&mut a, "<Esc><Space>2<Space>");
     assert!(a.status.contains("build from spec") && !a.status.contains("scaffold"));
+    keys(&mut a, "<Esc><Space>3<Space>");
+    assert!(a.status.contains("from spec+stuki") && a.status.contains("run"));
 }
 
 #[test]
@@ -560,4 +568,343 @@ fn show_ascii_screens() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let _ = std::fs::write("/tmp/ascii_stuki.txt", render(&mut a, 150, 40));
+}
+
+// ------------------------------------------------------------------ the Code tool
+
+fn code_app() -> App {
+    let mut a = fresh();
+    keys(&mut a, "<Space>3");
+    let _ = render(&mut a, 150, 40);
+    a
+}
+
+/// Waits for the build and the run (a build takes a few seconds).
+fn finish_run(a: &mut App) {
+    for _ in 0..6000 {
+        a.tick();
+        if !a.code.running() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the run never finished");
+}
+
+fn have_dotnet() -> bool {
+    std::process::Command::new("dotnet")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+#[test]
+fn the_tools_go_round_with_gt_and_f2() {
+    let mut a = fresh();
+    assert_eq!(a.tool, Tool::Spec);
+    keys(&mut a, "gt");
+    assert_eq!(a.tool, Tool::Stuki);
+    keys(&mut a, "gt");
+    assert_eq!(a.tool, Tool::Code);
+    keys(&mut a, "gt");
+    assert_eq!(a.tool, Tool::Spec);
+    keys(&mut a, "gT");
+    assert_eq!(a.tool, Tool::Code);
+    keys(&mut a, "gT");
+    assert_eq!(a.tool, Tool::Stuki);
+    keys(&mut a, "<Space>3");
+    assert_eq!(a.tool, Tool::Code);
+    a.on_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    assert_eq!(a.tool, Tool::Spec);
+    keys(&mut a, ":code<CR>");
+    assert_eq!(a.tool, Tool::Code);
+    let s = render(&mut a, 150, 40);
+    assert!(s.contains("3 Code"), "{s}");
+}
+
+#[test]
+fn the_first_visit_writes_the_program_and_that_is_not_a_change() {
+    let mut a = code_app();
+    let text = a.code.text();
+    assert!(text.contains("class Program"), "{text}");
+    assert!(
+        text.contains("int[] szamok = new int[] { 0, 3, 72, 81, 4, 5 };"),
+        "{text}"
+    );
+    assert!(!a.code.dirty() && !a.project_dirty());
+    let s = render(&mut a, 150, 40);
+    for w in [
+        "1 C# program",
+        "3 Output",
+        "test values",
+        "test 1/1",
+        "NORMAL",
+        "Program written",
+    ] {
+        assert!(s.contains(w), "missing {w}\n{s}");
+    }
+    // test mode has no console input
+    assert!(!s.contains("Console input"), "{s}");
+}
+
+#[test]
+fn the_console_mode_has_the_input_and_the_expected_output() {
+    let mut a = code_app();
+    keys(&mut a, "<Space>m");
+    let text = a.code.text();
+    assert!(
+        text.contains("Console.ReadLine()") && !text.contains("{ 0, 3, 72"),
+        "{text}"
+    );
+    assert_eq!(a.code.input.text(), "5\n3 72 81 4 5\n");
+    let s = render(&mut a, 150, 40);
+    for w in ["2 Console input", "Expected output (test 1)", "console"] {
+        assert!(s.contains(w), "missing {w}\n{s}");
+    }
+    // Tab goes program → input → output → program
+    assert_eq!(a.code.focus, crate::code::CodePane::Editor);
+    keys(&mut a, "<Tab>");
+    assert_eq!(a.code.focus, crate::code::CodePane::Input);
+    keys(&mut a, "<Tab>");
+    assert_eq!(a.code.focus, crate::code::CodePane::Output);
+    keys(&mut a, "<Tab>");
+    assert_eq!(a.code.focus, crate::code::CodePane::Editor);
+    // the expected output, and nothing to compare yet
+    let spec = a.doc.spec.clone();
+    let test = a.doc.tests[0].clone();
+    assert_eq!(a.code.expected(&spec, &test), Ok("3\n".to_string()));
+    assert_eq!(a.code.verdict(&spec, &test), None);
+    // back to the test values: the program is written again, the input box is hidden
+    keys(&mut a, "<Space>m");
+    assert!(a.code.text().contains("{ 0, 3, 72"));
+    assert!(!render(&mut a, 150, 40).contains("Console input"));
+}
+
+#[test]
+fn an_edited_program_is_kept_and_converting_asks_first() {
+    let mut a = code_app();
+    keys(&mut a, "Gomine<Esc>");
+    assert!(a.code.text().contains("mine"));
+    assert!(a.code.dirty() && a.project_dirty());
+    // the mode changes, the program stays
+    keys(&mut a, "<Space>m");
+    assert!(a.code.text().contains("mine") && !a.code.text().contains("Console.ReadLine()"));
+    assert!(a.code.status.contains("kept"), "{}", a.code.status);
+    // writing it again asks
+    keys(&mut a, "<Space>f");
+    let s = render(&mut a, 120, 30);
+    assert!(s.contains("Replace the program?"), "{s}");
+    keys(&mut a, "<Esc>");
+    assert!(a.code.text().contains("mine"));
+    keys(&mut a, "<Space>f");
+    keys(&mut a, "y");
+    assert!(!a.code.text().contains("mine") && a.code.text().contains("Console.ReadLine()"));
+}
+
+#[test]
+fn csharp_editing_indents_and_tabs() {
+    let mut a = code_app();
+    keys(&mut a, "ggdGiclass A {<CR>x;<Esc>");
+    assert_eq!(a.code.text(), "class A {\n    x;");
+    keys(&mut a, "ggdGi{}<Esc>i<CR><Esc>");
+    assert_eq!(a.code.text(), "{\n    \n}");
+    keys(&mut a, "ggdGi<Tab>y<Esc>");
+    assert_eq!(a.code.text(), "    y");
+    // and the highlighting does not disturb the text
+    let _ = render(&mut a, 150, 40);
+}
+
+#[test]
+fn a_test_case_change_rewrites_an_unedited_program() {
+    let mut a = code_app();
+    assert_eq!(a.code.key, Some((crate::code::Source::Test, 0)));
+    // a new test case (it is selected) has no values yet: the program can't be written for it
+    keys(&mut a, "<Space>1<Space>t");
+    assert_eq!((a.doc.tests.len(), a.current), (2, 1));
+    keys(&mut a, "<Space>3");
+    let _ = render(&mut a, 150, 40);
+    assert!(a.code.status.contains("Can't convert"), "{}", a.code.status);
+    // back to the first: the program is written again, as long as nobody edited it
+    keys(&mut a, "[t");
+    let _ = render(&mut a, 150, 40);
+    assert_eq!(a.current, 0);
+    assert!(
+        a.code.status.contains("Program written"),
+        "{}",
+        a.code.status
+    );
+    assert!(a.code.unedited());
+    // an edited program is left alone
+    keys(&mut a, "Gomine<Esc>]t");
+    let _ = render(&mut a, 150, 40);
+    assert!(a.code.text().contains("mine"));
+}
+
+#[test]
+fn the_project_file_holds_the_program_and_the_structograms() {
+    let dir = std::env::temp_dir().join(format!("speci-tui-code-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let plain = dir.join("plain.sp");
+    let f = dir.join("p.sp");
+
+    // never visited the Code tool: a plain file, as before
+    let mut a = fresh();
+    keys(&mut a, &format!(":w {}<CR>", plain.display()));
+    let text = std::fs::read_to_string(&plain).unwrap();
+    assert!(
+        !text.contains("--- code ---") && !text.contains("--- stuki ---"),
+        "{text}"
+    );
+
+    // structograms and a program, saved from the Code tool
+    keys(&mut a, "<Space>f"); // the structograms
+    assert_eq!(a.tool, Tool::Stuki);
+    keys(&mut a, "<Space>3");
+    let _ = render(&mut a, 150, 40);
+    keys(&mut a, "Gomine<Esc>");
+    assert!(a.code.dirty());
+    keys(&mut a, &format!(":w {}<CR>", f.display()));
+    assert!(!a.code.dirty() && !a.project_dirty() && !a.stuki.dirty());
+    let text = std::fs::read_to_string(&f).unwrap();
+    assert!(text.contains("/*--- code ---\nusing System;"), "{text}");
+    assert!(text.contains("/*--- stuki ---"), "{text}");
+
+    // opened by another window: all of it is back
+    let mut b = App::new(true);
+    b.load(&f);
+    assert_eq!(b.doc.spec, a.doc.spec);
+    // the file keeps the program without its trailing blank space
+    assert_eq!(b.code.text().trim_end(), a.code.text().trim_end());
+    assert!(!b.code.dirty());
+    assert_eq!(
+        b.stuki.program.diagrams.len(),
+        a.stuki.program.diagrams.len()
+    );
+    assert!(b.stuki.program.diagrams.len() >= 1);
+    // it was opened from a file: converting asks first
+    b.tool = Tool::Code;
+    keys(&mut b, "<Space>f");
+    assert!(render(&mut b, 120, 30).contains("Replace the program?"));
+    // a file without a program empties the editor, and the next visit fills it again
+    let mut c = fresh();
+    c.tool = Tool::Code;
+    let _ = render(&mut c, 100, 30);
+    c.load(&plain);
+    assert!(c.code.is_empty());
+    let _ = render(&mut c, 100, 30);
+    assert!(c.code.text().contains("class Program") && !c.code.dirty());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn notes_list_what_the_conversion_could_not_do() {
+    let mut a = code_app();
+    keys(&mut a, ":notes<CR>");
+    assert!(a.status.contains("nothing to point out"), "{}", a.status);
+    // a note (made up here) is listed in the output pane
+    a.code.notes = vec!["`x` can't be translated".into()];
+    keys(&mut a, ":notes<CR>");
+    assert!(
+        a.code.output.contains("- `x` can't be translated"),
+        "{}",
+        a.code.output
+    );
+    assert!(render(&mut a, 120, 30).contains("Things to check"));
+}
+
+#[test]
+fn the_help_leads_with_the_code_tool() {
+    let mut a = code_app();
+    let lines = ui::help_lines(&a.theme, a.tool, a.focus);
+    let order: Vec<String> = lines
+        .iter()
+        .map(ToString::to_string)
+        .filter(|l| {
+            [
+                "Moving around",
+                "C# code",
+                "Editing text",
+                "Evaluation pane",
+                "Files",
+            ]
+            .iter()
+            .any(|h| l.starts_with(h))
+        })
+        .collect();
+    assert!(position(&order, "Moving around") < position(&order, "C# code"));
+    assert!(position(&order, "C# code") < position(&order, "Editing text"));
+    assert!(order[position(&order, "C# code")].contains("you are here"));
+    keys(&mut a, "?");
+    assert!(render(&mut a, 150, 40).contains("C# code"));
+}
+
+#[test]
+fn the_code_tool_draws_only_ascii_in_ascii_mode() {
+    let mut a = code_app();
+    a.set_ascii(true);
+    assert_ascii(&render(&mut a, 150, 40), "code tool");
+    keys(&mut a, "<Space>m");
+    assert_ascii(&render(&mut a, 150, 40), "code tool, console");
+    for (w, h) in [(100, 30), (60, 20)] {
+        assert_ascii(&render(&mut a, w, h), "narrow code tool");
+    }
+    keys(&mut a, "?");
+    assert_ascii(&render(&mut a, 150, 40), "code help");
+}
+
+/// With dotnet on the PATH: build and run with the test's values and with console input.
+#[test]
+fn the_program_runs_with_dotnet() {
+    if !have_dotnet() {
+        eprintln!("no dotnet: skipped");
+        return;
+    }
+    let mut a = code_app();
+    keys(&mut a, "<Space>r");
+    assert!(a.code.running());
+    finish_run(&mut a);
+    assert_eq!(a.code.output.trim(), "db = 3", "{}", a.code.status);
+    assert!(a.code.status.starts_with("Finished"), "{}", a.code.status);
+
+    // the console mode: the input box is the program's input, the output is compared
+    keys(&mut a, "<Space>m<Space>r");
+    finish_run(&mut a);
+    assert_eq!(a.code.output.trim(), "3", "{}", a.code.status);
+    let spec = a.doc.spec.clone();
+    let test = a.doc.tests[0].clone();
+    assert_eq!(a.code.verdict(&spec, &test), Some(true));
+    let s = render(&mut a, 150, 40);
+    assert!(s.contains("matches"), "{s}");
+    // another input gives another output
+    keys(&mut a, "<C-w>2ggdGi1<CR>7<CR><Esc>:run<CR>");
+    finish_run(&mut a);
+    assert_eq!(a.code.verdict(&spec, &test), Some(false));
+    assert!(render(&mut a, 150, 40).contains("differs"));
+
+    // a compile error marks its line, and Enter in the output goes there
+    keys(&mut a, "<C-w>1");
+    let broken = a.code.text().replace("db = db + 1;", "db = db + oops;");
+    a.code.ed.set_text(&broken);
+    keys(&mut a, "<Space>r");
+    finish_run(&mut a);
+    assert!(a.code.output.contains("error CS0103"), "{}", a.code.output);
+    assert!(!a.code.ed.errors.is_empty());
+    let line = a.code.ed.errors[0];
+    keys(&mut a, "gg<C-w>3<CR>");
+    assert_eq!(a.code.focus, crate::code::CodePane::Editor);
+    assert_eq!(a.code.ed.line_col().0, line);
+}
+
+#[test]
+#[ignore = "prints the Code tool screens for a visual check"]
+fn show_code_screens() {
+    if have_dotnet() {
+        let mut a = code_app();
+        keys(&mut a, "<Space>m<Space>r");
+        finish_run(&mut a);
+        let _ = std::fs::write("/tmp/code_console.txt", render(&mut a, 150, 40));
+        keys(&mut a, "<Space>m");
+        let _ = std::fs::write("/tmp/code_test.txt", render(&mut a, 150, 40));
+        let _ = std::fs::write("/tmp/code_narrow.txt", render(&mut a, 70, 24));
+    }
 }
