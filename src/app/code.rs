@@ -7,6 +7,7 @@ use super::theme::{card, pane_title};
 use crate::csharp::{self, Inputs};
 use crate::dotnet;
 use crate::editor::{Lang, code_editor, cursor_of};
+use crate::ioplan::{self, IoLayout, Kind as IoKind, Level};
 use crate::platform;
 use crate::ui::{ACCENT, GREEN, I_CLOSE, I_OK, I_RUN, I_WAND, I_WARN, RED};
 use eframe::egui::{self, Id, Margin, RichText};
@@ -41,6 +42,8 @@ pub struct Code {
     pub(super) generated: String,
     /// The text the program reads in the console mode.
     pub stdin: String,
+    /// Where the console program breaks its input and output into lines.
+    pub layout: IoLayout,
     /// The program as it is in the saved file.
     saved: String,
     #[serde(skip)]
@@ -74,7 +77,14 @@ pub struct Code {
     /// made from (the hash).
     #[serde(skip)]
     expected: Option<(u64, Result<String, String>)>,
+    /// The inputs and the outputs of the specification (the hash it was read from); `None`: it
+    /// has errors.
+    #[serde(skip)]
+    io_vars: Option<(u64, Option<IoVars>)>,
 }
+
+/// The inputs and the outputs of a specification, with their shapes.
+type IoVars = (Vec<(String, IoKind)>, Vec<(String, IoKind)>);
 
 fn code_editor_id() -> Id {
     Id::unique("code-editor")
@@ -194,12 +204,13 @@ impl App {
             .get(self.current)
             .cloned()
             .unwrap_or_default();
-        match csharp::convert(
+        match csharp::convert_with(
             &self.doc.spec,
             &self.doc.title,
             &self.stuki.program,
             &test,
             self.code.source.into(),
+            &self.code.layout,
         ) {
             Ok(c) => {
                 self.code.text = c.code.clone();
@@ -307,6 +318,19 @@ impl App {
             .resizable(true)
             .default_size(if self.narrow { 220.0 } else { 260.0 })
             .show(ui, |ui| self.code_io(ui));
+        // how the console program breaks its input and output into lines (a phone has no room)
+        if !self.narrow && self.code.source == Source::Console {
+            let mut changed = false;
+            egui::Panel::left("code-lines")
+                .frame(pane)
+                .resizable(true)
+                .default_size(200.0)
+                .size_range(150.0..=320.0)
+                .show(ui, |ui| changed = self.code_lines(ui));
+            if changed {
+                self.code_lines_changed();
+            }
+        }
         egui::CentralPanel::default().frame(pane).show(ui, |ui| {
             ui.horizontal(|ui| pane_title(ui, "C#", "Code"));
             // compiler errors belong to the text they were found in
@@ -335,6 +359,83 @@ impl App {
             });
         });
         self.code_confirm(ui.ctx());
+    }
+
+    /// The inputs and outputs of the specification, read again when it changes.
+    fn io_vars(&mut self) -> Option<IoVars> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.doc.spec.hash(&mut h);
+        let key = h.finish();
+        if let Some((k, v)) = &self.code.io_vars
+            && *k == key
+        {
+            return v.clone();
+        }
+        let v = crate::parser::parse(&self.doc.spec)
+            .ok()
+            .map(|s| (csharp::io_vars(&s, true), csharp::io_vars(&s, false)));
+        self.code.io_vars = Some((key, v.clone()));
+        v
+    }
+
+    /// The side panel of the Code tab: for every input and output, where the line breaks are.
+    /// Returns true when something was changed.
+    fn code_lines(&mut self, ui: &mut egui::Ui) -> bool {
+        let Some((ins, outs)) = self.io_vars() else {
+            pane_title(ui, I_WARN, "Lines");
+            ui.label(RichText::new("Fix the specification first").small().weak());
+            return false;
+        };
+        let mut layout = self.code.layout.clone();
+        ui.horizontal(|ui| {
+            pane_title(ui, I_WAND, "Lines");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(!layout.is_default(), egui::Button::new("Reset").small())
+                    .on_hover_text("Back to the default layout")
+                    .clicked()
+                {
+                    layout.reset();
+                }
+            });
+        });
+        ui.label(
+            RichText::new("Where the program breaks its input and output into lines")
+                .small()
+                .weak(),
+        );
+        egui::ScrollArea::vertical()
+            .id_salt("code-lines-scroll")
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                for (title, vars, input) in [("Input", &ins, true), ("Output", &outs, false)] {
+                    if vars.is_empty() {
+                        continue;
+                    }
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(title).strong());
+                    ui.separator();
+                    let plan = ioplan::plan(vars, &layout, input);
+                    for (k, e) in plan.iter().enumerate() {
+                        let prev = k.checked_sub(1).map(|p| plan[p].name.as_str());
+                        lines_row(ui, &mut layout, e, input, prev);
+                    }
+                }
+            });
+        let changed = layout != self.code.layout;
+        self.code.layout = layout;
+        changed
+    }
+
+    /// The line layout was changed: the program and its input are written for it again, unless
+    /// the program was edited.
+    fn code_lines_changed(&mut self) {
+        if self.code.text.is_empty() || self.code.text == self.code.generated {
+            self.code_convert();
+        } else {
+            self.code.status = "Line layout changed: press “From spec + stuki” to write the program for it (your edits are kept until then)".into();
+        }
     }
 
     fn code_confirm(&mut self, ctx: &egui::Context) {
@@ -501,7 +602,7 @@ impl App {
             .unwrap_or_default();
         match crate::parser::parse(&self.doc.spec)
             .map_err(|d| d[0].title.clone())
-            .and_then(|s| csharp::console_input(&s, &test))
+            .and_then(|s| csharp::console_input_with(&s, &test, &self.code.layout))
         {
             Ok(text) => self.code.stdin = text,
             Err(e) => self.code.status = format!("No input from the test case: {e}"),
@@ -518,7 +619,7 @@ impl App {
             .cloned()
             .unwrap_or_default();
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (&self.doc.spec, &test).hash(&mut h);
+        (&self.doc.spec, &test, &self.code.layout).hash(&mut h);
         let key = h.finish();
         if let Some((k, r)) = &self.code.expected
             && *k == key
@@ -527,7 +628,7 @@ impl App {
         }
         let r = crate::parser::parse(&self.doc.spec)
             .map_err(|d| format!("the specification has errors ({})", d[0].title))
-            .and_then(|s| csharp::console_output(&s, &test));
+            .and_then(|s| csharp::console_output_with(&s, &test, &self.code.layout));
         self.code.expected = Some((key, r.clone()));
         r
     }
@@ -577,5 +678,88 @@ impl App {
     pub(super) fn code_copy(&mut self, ctx: &egui::Context) {
         ctx.copy_text(self.code.text.clone());
         self.code.status = "Copied the C# program".into();
+    }
+}
+
+/// What a kind of variable is called in the panel.
+fn kind_word(kind: IoKind) -> &'static str {
+    match kind {
+        IoKind::Scalar => "value",
+        IoKind::Text => "text",
+        IoKind::Record => "record",
+        IoKind::List => "list",
+        IoKind::Records => "list of records",
+        IoKind::Table => "table",
+        IoKind::Other => "not supported",
+    }
+}
+
+/// The name of a layout, and an example of it, for a kind of variable.
+fn level_words(kind: IoKind, level: Level) -> (&'static str, &'static str) {
+    match (level, kind) {
+        (Level::Rows, IoKind::Table) => (
+            "row per line",
+            "A row of the table in each line: 1 2 3 ↵ 4 5 6",
+        ),
+        (Level::Rows, _) => ("record per line", "A record in each line: Anna 5 ↵ Bence 3"),
+        (Level::Each, IoKind::Record | IoKind::Records) => (
+            "field per line",
+            "Every field in a line of its own: Anna ↵ 5 ↵ Bence ↵ 3",
+        ),
+        (Level::Each, _) => (
+            "value per line",
+            "Every value in a line of its own: 1 ↵ 2 ↵ 3",
+        ),
+        _ => ("one line", "All of it in one line: 1 2 3 4 5 6"),
+    }
+}
+
+/// One variable of the panel: its layouts to choose from, and whether it continues the line of
+/// the variable before it.
+fn lines_row(
+    ui: &mut egui::Ui,
+    layout: &mut IoLayout,
+    e: &ioplan::Entry,
+    input: bool,
+    prev: Option<&str>,
+) {
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(&e.name).monospace().strong());
+        ui.label(RichText::new(kind_word(e.kind)).small().weak());
+    });
+    let choices = e.kind.choices(input);
+    if choices.len() > 1 {
+        ui.horizontal_wrapped(|ui| {
+            for &level in choices {
+                let (name, example) = level_words(e.kind, level);
+                let on = e.level == level;
+                if ui
+                    .selectable_label(on, RichText::new(name).small())
+                    .on_hover_text(example)
+                    .clicked()
+                    && !on
+                {
+                    // the default is "nothing chosen"
+                    let stored = if level == e.kind.default_level(input) {
+                        Level::Auto
+                    } else {
+                        level
+                    };
+                    layout.set_level(&e.name, stored);
+                }
+            }
+        });
+    }
+    if e.can_join {
+        let mut join = e.join;
+        let text = RichText::new(format!("same line as {}", prev.unwrap_or_default())).small();
+        if ui
+            .checkbox(&mut join, text)
+            .on_hover_text("Its values continue the line of the variable above")
+            .changed()
+        {
+            layout.set_join(&e.name, join);
+        }
     }
 }

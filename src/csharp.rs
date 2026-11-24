@@ -8,6 +8,7 @@
 
 use crate::data;
 use crate::eval::{Env, Value};
+use crate::ioplan::{self, IoLayout, Kind as IoKind, Level};
 use crate::parser::{BinOp, Expr, ExprKind, Fragment, Role, Spec, Type, parse_fragment, vars_in};
 use crate::stuki::merge::{Rel, relation};
 use crate::stuki::model::{Diagram, Kind, Node, Program};
@@ -38,43 +39,82 @@ pub fn generate(
     inputs: Inputs,
     test: &str,
 ) -> Result<Output, String> {
+    generate_with(spec, program, inputs, test, &IoLayout::default())
+}
+
+/// [`generate`] with the line layout of the console input and output chosen (see [`IoLayout`];
+/// the test values mode ignores it).
+pub fn generate_with(
+    spec: &Spec,
+    program: &Program,
+    inputs: Inputs,
+    test: &str,
+    layout: &IoLayout,
+) -> Result<Output, String> {
     let env = match inputs {
         Inputs::Test => Some(data::load(spec, test).map_err(|d| d.title)?),
         Inputs::Console => None,
     };
-    Gen::new(spec).run(program, inputs, env)
+    let mut g = Gen::new(spec);
+    g.layout = layout.clone();
+    g.run(program, inputs, env)
 }
 
-/// What the program of [`Inputs::Console`] reads for the test case `test`: one line per scalar,
-/// one line per array (a row per line for two-dimensional ones), a record's fields in one line.
+/// The inputs (`input`) or outputs of the specification with their shapes: what the layout
+/// panel of the Code tab lists.
+pub fn io_vars(spec: &Spec, input: bool) -> Vec<(String, IoKind)> {
+    let role = if input { Role::In } else { Role::Out };
+    let mut g = Gen::new(spec);
+    spec.decls
+        .iter()
+        .filter(|d| d.role == role)
+        .map(|d| {
+            let ty = g.ty_of(&d.ty);
+            (d.name.clone(), io_kind(&ty))
+        })
+        .collect()
+}
+
+fn io_kind(ty: &Ty) -> IoKind {
+    match ty {
+        Ty::Str => IoKind::Text,
+        Ty::Rec(_) => IoKind::Record,
+        Ty::Arr { dims: 1, elem, .. } if matches!(**elem, Ty::Rec(_)) => IoKind::Records,
+        Ty::Arr { dims: 1, .. } => IoKind::List,
+        Ty::Arr { dims: 2, .. } => IoKind::Table,
+        Ty::Arr { .. } => IoKind::Other,
+        _ => IoKind::Scalar,
+    }
+}
+
+/// What the program of [`Inputs::Console`] reads for the test case `test` (with the default
+/// layout): one line per scalar, one line per array (a row per line for two-dimensional ones, a
+/// record per line for arrays of records), a record's fields in one line.
 pub fn console_input(spec: &Spec, test: &str) -> Result<String, String> {
-    let env = data::load(spec, test).map_err(|d| d.title)?;
-    let mut g = Gen::new(spec);
-    let mut out = String::new();
-    for d in spec.decls.iter().filter(|d| d.role == Role::In) {
-        let ty = g.ty_of(&d.ty);
-        match env.get(&d.name) {
-            Some(v) => g.input_lines(v, &ty, &mut out),
-            None => return Err(format!("The test case has no value for `{}`", d.name)),
-        }
-    }
-    Ok(out)
+    console_input_with(spec, test, &IoLayout::default())
 }
 
-/// What the program of [`Inputs::Console`] prints for the test case `test`: the outputs in
-/// declaration order, one value per line, an array's elements each followed by a space.
-pub fn console_output(spec: &Spec, test: &str) -> Result<String, String> {
+/// [`console_input`] for the line layout `layout`.
+pub fn console_input_with(spec: &Spec, test: &str, layout: &IoLayout) -> Result<String, String> {
     let env = data::load(spec, test).map_err(|d| d.title)?;
     let mut g = Gen::new(spec);
-    let mut out = String::new();
-    for d in spec.decls.iter().filter(|d| d.role == Role::Out) {
-        let ty = g.ty_of(&d.ty);
-        match env.get(&d.name) {
-            Some(v) => g.output_lines(v, &ty, &mut out),
-            None => return Err(format!("The test case has no value for `{}`", d.name)),
-        }
-    }
-    Ok(out)
+    g.layout = layout.clone();
+    g.io_text(&env, Role::In)
+}
+
+/// What the program of [`Inputs::Console`] prints for the test case `test` (with the default
+/// layout): the outputs in declaration order, an array on one line (a row per line for
+/// two-dimensional ones).
+pub fn console_output(spec: &Spec, test: &str) -> Result<String, String> {
+    console_output_with(spec, test, &IoLayout::default())
+}
+
+/// [`console_output`] for the line layout `layout`.
+pub fn console_output_with(spec: &Spec, test: &str, layout: &IoLayout) -> Result<String, String> {
+    let env = data::load(spec, test).map_err(|d| d.title)?;
+    let mut g = Gen::new(spec);
+    g.layout = layout.clone();
+    g.io_text(&env, Role::Out)
 }
 
 // ------------------------------------------------------------------------------ the Code tab
@@ -117,6 +157,18 @@ pub fn convert(
     test: &str,
     inputs: Inputs,
 ) -> Result<Converted, ConvertError> {
+    convert_with(spec_text, title, stuki, test, inputs, &IoLayout::default())
+}
+
+/// [`convert`] with the line layout of the console input and output chosen.
+pub fn convert_with(
+    spec_text: &str,
+    title: &str,
+    stuki: &Program,
+    test: &str,
+    inputs: Inputs,
+    layout: &IoLayout,
+) -> Result<Converted, ConvertError> {
     let spec = crate::parser::parse(spec_text).map_err(|d| {
         ConvertError::Spec(match d.first() {
             Some(d) if d.line > 0 => format!(" (line {}: {})", d.line, d.title),
@@ -130,10 +182,10 @@ pub fn convert(
     } else {
         stuki.clone()
     };
-    let out = generate(&spec, &program, inputs, test).map_err(ConvertError::Test)?;
+    let out = generate_with(&spec, &program, inputs, test, layout).map_err(ConvertError::Test)?;
     let mut notes = out.notes;
     let stdin = match inputs {
-        Inputs::Console => match console_input(&spec, test) {
+        Inputs::Console => match console_input_with(&spec, test, layout) {
             Ok(t) => Some(t),
             Err(e) => {
                 notes.push(format!("no input from the test case: {e}"));
@@ -260,6 +312,8 @@ struct Gen<'a> {
     /// Test mode prints `name = value`; console mode prints the values only.
     labels: bool,
     english: bool,
+    /// How the console program lays out its input and output.
+    layout: IoLayout,
 }
 
 const KEYWORDS: &[&str] = &[
@@ -413,13 +467,15 @@ fn target_names(e: &Expr, out: &mut Vec<String>) {
     }
 }
 
-/// `(lo, hi)` per dimension and the element type of an array type.
+/// `(lo, hi)` per dimension and the element type of an array type. The element type is returned
+/// as it is written (`Hallgato`, not the record it stands for), so that every use of a named
+/// record type is the same C# type.
 fn dims_of<'t>(spec: &'t Spec, t: &'t Type) -> (Vec<(&'t Expr, Option<&'t Expr>)>, &'t Type) {
     let mut dims = vec![];
-    let mut cur = spec.resolve(t).unwrap_or(t);
-    while let Type::Array { lo, hi, elem } = cur {
+    let mut cur = t;
+    while let Some(Type::Array { lo, hi, elem }) = spec.resolve(cur) {
         dims.push((lo, hi.as_ref()));
-        cur = spec.resolve(elem).unwrap_or(elem);
+        cur = elem;
     }
     (dims, cur)
 }
@@ -444,6 +500,7 @@ impl<'a> Gen<'a> {
             fallback: "1001".into(),
             labels: false,
             english: spec.post_kw != "Uf:",
+            layout: IoLayout::default(),
         };
         for d in &spec.decls {
             let ty = g.ty_of(&d.ty);
@@ -1152,48 +1209,102 @@ impl<'a> Gen<'a> {
         }
     }
 
-    fn shown_elem(&self, v: &Value, ty: &Ty) -> String {
-        match (v, ty) {
-            (Value::Rec(fs), Ty::Rec(n)) => self
-                .fields_of(n)
-                .iter()
-                .map(|(f, _)| {
-                    fs.iter()
-                        .find(|(x, _)| x == f)
-                        .map_or(String::new(), |(_, x)| Self::shown(x))
-                })
-                .collect::<Vec<_>>()
-                .join(" "),
-            _ => Self::shown(v),
+    // ------------------------------------------------------------------ console text
+
+    /// The layout of `decls` (inputs or outputs).
+    fn io_plan(&self, decls: &[&crate::parser::Decl], input: bool) -> Vec<ioplan::Entry> {
+        let vars: Vec<(String, IoKind)> = decls
+            .iter()
+            .map(|d| (d.name.clone(), io_kind(&self.vars[&d.name])))
+            .collect();
+        ioplan::plan(&vars, &self.layout, input)
+    }
+
+    /// The type of the items of an array type (a row of a table, or the element).
+    fn inner_ty(ty: &Ty) -> Option<Ty> {
+        match ty {
+            Ty::Arr { dims, elem, zero } if *dims > 1 => Some(Ty::Arr {
+                dims: dims - 1,
+                elem: elem.clone(),
+                zero: *zero,
+            }),
+            Ty::Arr { elem, .. } => Some((**elem).clone()),
+            _ => None,
         }
     }
 
-    /// The console text for one output (the counterpart of [`Gen::print_decl`]).
-    fn output_lines(&self, v: &Value, ty: &Ty, out: &mut String) {
-        match (v, ty) {
-            (Value::Arr { items, .. }, Ty::Arr { dims: 1, elem, .. }) => {
+    /// The simple values of one value, as the tokens of the console text, in order.
+    fn leaves(&self, v: &Value, ty: &Ty, input: bool, out: &mut Vec<String>) {
+        match (v, Self::inner_ty(ty)) {
+            (Value::Arr { items, .. }, Some(inner)) => {
                 for it in items.iter() {
-                    out.push_str(&self.shown_elem(it, elem));
-                    out.push(' ');
+                    self.leaves(it, &inner, input, out);
                 }
-                out.push('\n');
             }
-            (Value::Arr { items, .. }, Ty::Arr { dims: 2, elem, .. }) => {
-                for row in items.iter() {
-                    if let Value::Arr { items, .. } = row {
-                        for it in items.iter() {
-                            out.push_str(&self.shown_elem(it, elem));
-                            out.push(' ');
+            _ => match (v, ty) {
+                (Value::Rec(fs), Ty::Rec(n)) => {
+                    // the fields that are not simple values are neither read nor printed
+                    for (f, ft) in self.fields_of(n) {
+                        if ft.is_scalar() {
+                            let x = fs.iter().find(|(x, _)| *x == f).map(|(_, x)| x);
+                            out.push(x.map_or(String::new(), |x| self.token(x, input)));
                         }
                     }
-                    out.push('\n');
+                }
+                _ => out.push(self.token(v, input)),
+            },
+        }
+    }
+
+    fn token(&self, v: &Value, input: bool) -> String {
+        if input {
+            Self::plain(v)
+        } else {
+            Self::shown(v)
+        }
+    }
+
+    /// The lines (as tokens) of one value in the layout `level`.
+    fn lines_of(&self, v: &Value, ty: &Ty, level: Level, input: bool) -> Vec<Vec<String>> {
+        let mut all = vec![];
+        self.leaves(v, ty, input, &mut all);
+        match (level, v, Self::inner_ty(ty)) {
+            (Level::Each, ..) => all.into_iter().map(|t| vec![t]).collect(),
+            (Level::Rows, Value::Arr { items, .. }, Some(inner)) => items
+                .iter()
+                .map(|it| {
+                    let mut line = vec![];
+                    self.leaves(it, &inner, input, &mut line);
+                    line
+                })
+                .collect(),
+            _ => vec![all],
+        }
+    }
+
+    /// What the console program reads (`Role::In`) or prints (`Role::Out`) for the values `env`,
+    /// in the layout chosen.
+    fn io_text(&mut self, env: &Env, role: Role) -> Result<String, String> {
+        let spec = self.spec;
+        let input = role == Role::In;
+        let decls: Vec<_> = spec.decls.iter().filter(|d| d.role == role).collect();
+        let plan = self.io_plan(&decls, input);
+        let mut lines: Vec<Vec<String>> = vec![];
+        for (d, e) in decls.iter().zip(&plan) {
+            let ty = self.vars[&d.name].clone();
+            let Some(v) = env.get(&d.name) else {
+                return Err(format!("The test case has no value for `{}`", d.name));
+            };
+            let mut l = self.lines_of(v, &ty, e.level, input);
+            if e.join && !l.is_empty() {
+                let first = l.remove(0);
+                if let Some(last) = lines.last_mut() {
+                    last.extend(first);
                 }
             }
-            _ => {
-                out.push_str(&self.shown_elem(v, ty));
-                out.push('\n');
-            }
+            lines.extend(l);
         }
+        Ok(lines.iter().map(|l| l.join(" ") + "\n").collect())
     }
 
     // ------------------------------------------------------------------ output
@@ -1311,6 +1422,10 @@ impl<'a> Gen<'a> {
         env: Option<Env>,
     ) -> Result<Output, String> {
         self.labels = inputs == Inputs::Test;
+        if self.labels {
+            // the test values are written into the program: there is no input to lay out
+            self.layout = IoLayout::default();
+        }
         let spec = self.spec;
         let headers: Vec<_> = program
             .diagrams
@@ -1379,14 +1494,22 @@ impl<'a> Gen<'a> {
             match &env {
                 Some(env) => ins.iter().for_each(|d| self.test_decl(d, env)),
                 None => {
-                    let needs = ins
-                        .iter()
-                        .any(|d| self.vars.get(&d.name).is_some_and(|t| *t != Ty::Str));
+                    let plan = self.io_plan(&ins, true);
+                    let needs = ins.iter().zip(&plan).any(|(d, e)| {
+                        e.level != Level::Each
+                            && self.vars.get(&d.name).is_some_and(|t| *t != Ty::Str)
+                    });
                     let sor = self.fresh("sor");
                     if needs {
                         self.line(&format!("string[] {sor};"));
                     }
-                    ins.iter().for_each(|d| self.read_decl(d, &sor));
+                    let mut off = 0;
+                    for (d, e) in ins.iter().zip(&plan) {
+                        if !e.join {
+                            off = 0;
+                        }
+                        off = self.read_decl(d, &sor, e.level, e.join, off);
+                    }
                 }
             }
             self.line("");
@@ -1419,8 +1542,10 @@ impl<'a> Gen<'a> {
         if !outs.is_empty() {
             self.line("");
             self.line(&format!("// {kw_out}: {}", names(&outs)));
-            for d in &outs {
-                self.print_decl(d);
+            let plan = self.io_plan(&outs, false);
+            for (k, (d, e)) in outs.iter().zip(&plan).enumerate() {
+                let closing = plan.get(k + 1).is_none_or(|n| !n.join);
+                self.print_decl(d, e.level, closing);
             }
             if let Some(env) = &env {
                 for d in &outs {
@@ -1785,97 +1910,219 @@ impl<'a> Gen<'a> {
         }
     }
 
-    fn read_fields(&mut self, base: &str, rec: &str, sor: &str) {
-        for (k, (f, ft)) in self.fields_of(rec).into_iter().enumerate() {
+    /// The value of a token as `ty`. A truth value looks at its token three times, so a token that
+    /// reads something (`Console.ReadLine()`, `sor[p++]`) is put in a variable first.
+    fn leaf_value(&mut self, ty: &Ty, tok: &str) -> String {
+        if matches!(ty, Ty::Bool) && (tok.contains("++") || tok.contains("ReadLine")) {
+            let w = self.fresh("s");
+            self.line(&format!("string {w} = {tok};"));
+            return self.parse(ty, &w);
+        }
+        self.parse(ty, tok)
+    }
+
+    /// Reads the simple fields of a record from the tokens `sor[off..]` of the line; returns the
+    /// position after them.
+    fn read_fields(&mut self, base: &str, rec: &str, sor: &str, off: usize) -> usize {
+        let mut k = off;
+        for (f, ft) in self.fields_of(rec) {
             if ft.is_scalar() {
                 let p = self.parse(&ft, &format!("{sor}[{k}]"));
                 self.line(&format!("{base}.{} = {p};", id(&f)));
+                k += 1;
             } else {
-                self.note(format!(
-                    "the field `{f}` of `{rec}` is not a simple value: it is not read"
-                ));
+                self.not_read_field(&f, rec);
+            }
+        }
+        k
+    }
+
+    /// Reads the simple fields of a record, each from a line of its own.
+    fn read_fields_each(&mut self, base: &str, rec: &str) {
+        for (f, ft) in self.fields_of(rec) {
+            if ft.is_scalar() {
+                let v = self.leaf_value(&ft, "Console.ReadLine()");
+                self.line(&format!("{base}.{} = {v};", id(&f)));
+            } else {
+                self.not_read_field(&f, rec);
             }
         }
     }
 
-    fn read_decl(&mut self, d: &crate::parser::Decl, sor: &str) {
-        let spec = self.spec;
+    fn not_read_field(&mut self, f: &str, rec: &str) {
+        self.note(format!(
+            "the field `{f}` of `{rec}` is not a simple value: it is not read"
+        ));
+    }
+
+    /// Reads one input. `level` is its layout; `cont`: the line it is in was started by the
+    /// variable before (it is not read again) and `off` tokens of it are used up. Returns the
+    /// position in the line after this variable.
+    fn read_decl(
+        &mut self,
+        d: &crate::parser::Decl,
+        sor: &str,
+        level: Level,
+        cont: bool,
+        off: usize,
+    ) -> usize {
         let ty = self.vars[&d.name].clone();
         let name = id(&d.name);
         let pre = self.prefix(&ty);
         match &ty {
-            Ty::Str => self.line(&format!("{pre}{name} = Console.ReadLine();")),
+            Ty::Str => {
+                self.line(&format!("{pre}{name} = Console.ReadLine();"));
+                off
+            }
             t if t.is_scalar() => {
-                self.line(&format!("{sor} = {SPLIT};"));
-                let p = self.parse(t, &format!("{sor}[0]"));
+                if !cont {
+                    self.line(&format!("{sor} = {SPLIT};"));
+                }
+                let p = self.parse(t, &format!("{sor}[{off}]"));
                 self.line(&format!("{pre}{name} = {p};"));
+                off + 1
             }
             Ty::Rec(n) => {
                 self.line(&format!("{pre}{name} = new {n}();"));
-                self.line(&format!("{sor} = {SPLIT};"));
-                self.read_fields(&name, n, sor);
+                if level == Level::Each {
+                    self.read_fields_each(&name, n);
+                    return off;
+                }
+                if !cont {
+                    self.line(&format!("{sor} = {SPLIT};"));
+                }
+                self.read_fields(&name, n, sor, off)
             }
-            Ty::Arr { dims, elem, .. } => {
-                let alloc = self.alloc(&d.ty);
-                self.line(&format!("{pre}{name} = {alloc};"));
-                let (dd, _) = dims_of(spec, &d.ty);
-                if *dims > 2 {
-                    self.note(format!(
-                        "`{}` has more than two dimensions: it is not read",
-                        d.name
-                    ));
-                    return;
-                }
-                let mut vars = vec![];
-                let mut bounds = vec![];
-                for (lo, hi) in &dd {
-                    let v = self.fresh(if vars.is_empty() { "j" } else { "q" });
-                    let l = self.ex(lo, 0);
-                    let h = match hi {
-                        Some(h) => self.ex(h, 5),
-                        None => format!("{name}.Length - 1"),
-                    };
-                    vars.push(v.clone());
-                    bounds.push((v, l, h, lo));
-                }
-                let last = bounds.len() - 1;
-                for (k, (v, l, h, _)) in bounds.iter().enumerate() {
-                    // the line with the values: once, or once per row of a two-dimensional array
-                    if k == last && !matches!(**elem, Ty::Rec(_)) {
-                        self.line(&format!("{sor} = {SPLIT};"));
-                    }
-                    self.line(&format!("for (int {v} = {l}; {v} <= {h}; {v}++)"));
-                    self.open();
-                }
-                let idx: Vec<String> = bounds.iter().map(|b| b.0.clone()).collect();
-                let target = format!("{name}[{}]", idx.join(", "));
-                match &**elem {
-                    Ty::Rec(r) => {
-                        self.line(&format!("{sor} = {SPLIT};"));
-                        self.read_fields(&target, r, sor);
-                    }
-                    e => {
-                        let pos = {
-                            let (v, _, _, lo) = &bounds[last];
-                            self.offset(v, lo)
-                        };
-                        let p = self.parse(e, &format!("{sor}[{pos}]"));
-                        self.line(&format!("{target} = {p};"));
-                    }
-                }
-                for _ in &bounds {
-                    self.close();
-                }
-                for v in vars {
-                    self.taken.remove(&v);
-                }
+            Ty::Arr { .. } => {
+                self.read_array(d, sor, level, cont, off);
+                off
             }
-            _ => {}
+            _ => off,
         }
     }
 
-    // A one-dimensional array reads its single line before the loop (above); a
-    // two-dimensional one reads one line per row inside the outer loop.
+    /// Reads an array: the loops over its indexes, and where in them the lines are read.
+    fn read_array(
+        &mut self,
+        d: &crate::parser::Decl,
+        sor: &str,
+        level: Level,
+        cont: bool,
+        off: usize,
+    ) {
+        let spec = self.spec;
+        let Ty::Arr { dims, elem, .. } = self.vars[&d.name].clone() else {
+            return;
+        };
+        let name = id(&d.name);
+        let pre = self.prefix(&self.vars[&d.name].clone());
+        let alloc = self.alloc(&d.ty);
+        self.line(&format!("{pre}{name} = {alloc};"));
+        if dims > 2 {
+            self.note(format!(
+                "`{}` has more than two dimensions: it is not read",
+                d.name
+            ));
+            return;
+        }
+        let (dd, _) = dims_of(spec, &d.ty);
+        let mut vars = vec![];
+        let mut bounds = vec![];
+        for (lo, hi) in &dd {
+            let v = self.fresh(if vars.is_empty() { "j" } else { "q" });
+            let l = self.ex(lo, 0);
+            let h = match hi {
+                Some(h) => self.ex(h, 5),
+                None => format!("{name}.Length - 1"),
+            };
+            vars.push(v.clone());
+            bounds.push((v, l, h, lo));
+        }
+        let is_rec = matches!(*elem, Ty::Rec(_));
+        // the layouts with a loop of their own that picks each value by its index
+        let classic = matches!(
+            (dims, is_rec, level),
+            (1, false, Level::Single) | (1, true, Level::Rows) | (2, false, Level::Rows)
+        );
+        // after how many loops a line is read; `None`: every value has a line of its own
+        let depth = match level {
+            Level::Single => Some(0),
+            Level::Rows => Some(1),
+            _ => None,
+        };
+        // the position in the line, for the layouts that have no index for it
+        let pos = if classic || depth.is_none() {
+            None
+        } else {
+            Some(self.fresh("p"))
+        };
+        if let (Some(p), Some(depth)) = (&pos, depth) {
+            if depth == 0 {
+                if !cont {
+                    self.line(&format!("{sor} = {SPLIT};"));
+                }
+                self.line(&format!("int {p} = {off};"));
+            } else {
+                self.line(&format!("int {p} = 0;"));
+            }
+        }
+        let last = bounds.len() - 1;
+        for (k, (v, l, h, _)) in bounds.iter().enumerate() {
+            // the line with the values: once, or once per row of a two-dimensional array
+            if classic && k == last && !is_rec && !cont {
+                self.line(&format!("{sor} = {SPLIT};"));
+            }
+            self.line(&format!("for (int {v} = {l}; {v} <= {h}; {v}++)"));
+            self.open();
+            if let (Some(p), Some(depth)) = (&pos, depth)
+                && depth == k + 1
+            {
+                self.line(&format!("{sor} = {SPLIT};"));
+                self.line(&format!("{p} = 0;"));
+            }
+        }
+        let idx: Vec<String> = bounds.iter().map(|b| b.0.clone()).collect();
+        let target = format!("{name}[{}]", idx.join(", "));
+        let token = |pos: &Option<String>| match pos {
+            Some(p) => format!("{sor}[{p}++]"),
+            None => "Console.ReadLine()".to_string(),
+        };
+        match &*elem {
+            Ty::Rec(r) if classic => {
+                self.line(&format!("{sor} = {SPLIT};"));
+                self.read_fields(&target, r, sor, 0);
+            }
+            Ty::Rec(r) => {
+                for (f, ft) in self.fields_of(r) {
+                    if ft.is_scalar() {
+                        let v = self.leaf_value(&ft, &token(&pos));
+                        self.line(&format!("{target}.{} = {v};", id(&f)));
+                    } else {
+                        self.not_read_field(&f, r);
+                    }
+                }
+            }
+            e if classic => {
+                let at = {
+                    let (v, _, _, lo) = &bounds[last];
+                    self.offset(v, lo)
+                };
+                let at = if off > 0 { format!("{at} + {off}") } else { at };
+                let p = self.parse(e, &format!("{sor}[{at}]"));
+                self.line(&format!("{target} = {p};"));
+            }
+            e => {
+                let v = self.leaf_value(e, &token(&pos));
+                self.line(&format!("{target} = {v};"));
+            }
+        }
+        for _ in &bounds {
+            self.close();
+        }
+        for v in vars.into_iter().chain(pos) {
+            self.taken.remove(&v);
+        }
+    }
 
     fn test_decl(&mut self, d: &crate::parser::Decl, env: &Env) {
         let ty = self.vars[&d.name].clone();
@@ -1964,73 +2211,22 @@ impl<'a> Gen<'a> {
         }
     }
 
-    fn rec_line(&self, v: &Value, ty: &Ty) -> String {
-        let (Value::Rec(fs), Ty::Rec(n)) = (v, ty) else {
-            return Self::plain(v);
-        };
-        self.fields_of(n)
-            .iter()
-            .map(|(f, _)| {
-                fs.iter()
-                    .find(|(x, _)| x == f)
-                    .map_or(String::new(), |(_, x)| Self::plain(x))
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-
-    /// The console text for one input (the counterpart of [`Gen::read_decl`]).
-    fn input_lines(&self, v: &Value, ty: &Ty, out: &mut String) {
-        match (v, ty) {
-            (Value::Arr { items, .. }, Ty::Arr { dims: 1, elem, .. }) => {
-                if matches!(**elem, Ty::Rec(_)) {
-                    for it in items.iter() {
-                        out.push_str(&self.rec_line(it, elem));
-                        out.push('\n');
-                    }
-                } else {
-                    let line: Vec<String> = items.iter().map(Self::plain).collect();
-                    out.push_str(&line.join(" "));
-                    out.push('\n');
-                }
-            }
-            (Value::Arr { items, .. }, Ty::Arr { dims: 2, elem, .. }) => {
-                for row in items.iter() {
-                    if let Value::Arr { items, .. } = row {
-                        let line: Vec<String> =
-                            items.iter().map(|x| self.rec_line(x, elem)).collect();
-                        out.push_str(&line.join(" "));
-                    }
-                    out.push('\n');
-                }
-            }
-            (Value::Rec(_), Ty::Rec(_)) => {
-                out.push_str(&self.rec_line(v, ty));
-                out.push('\n');
-            }
-            _ => {
-                out.push_str(&Self::plain(v));
-                out.push('\n');
-            }
-        }
-    }
-
     // ------------------------------------------------------------------ output
 
-    fn rec_expr(&self, base: &str, rec: &str) -> String {
-        let parts: Vec<String> = self
-            .fields_of(rec)
+    fn rec_exprs(&self, base: &str, rec: &str) -> Vec<String> {
+        self.fields_of(rec)
             .iter()
             .map(|(f, _)| format!("{base}.{}", id(f)))
-            .collect();
-        if parts.len() == 1 {
-            parts[0].clone()
-        } else {
-            parts.join(" + \" \" + ")
-        }
+            .collect()
     }
 
-    fn print_decl(&mut self, d: &crate::parser::Decl) {
+    fn rec_expr(&self, base: &str, rec: &str) -> String {
+        self.rec_exprs(base, rec).join(" + \" \" + ")
+    }
+
+    /// Prints one output in the layout `level`. `closing`: it ends its line (a value that does
+    /// not is followed by a space, and the next one continues the line).
+    fn print_decl(&mut self, d: &crate::parser::Decl, level: Level, closing: bool) {
         let spec = self.spec;
         let ty = self.vars[&d.name].clone();
         let name = id(&d.name);
@@ -2060,18 +2256,38 @@ impl<'a> Gen<'a> {
                 }
                 let idx: Vec<String> = bounds.iter().map(|b| b.0.clone()).collect();
                 let item = format!("{name}[{}]", idx.join(", "));
-                let shown = match &**elem {
-                    Ty::Rec(r) => self.rec_expr(&item, r),
-                    _ => item,
+                let leaves = match &**elem {
+                    Ty::Rec(r) => self.rec_exprs(&item, r),
+                    _ => vec![item],
                 };
-                self.line(&format!("Console.Write({shown} + \" \");"));
+                match level {
+                    Level::Each => {
+                        for e in &leaves {
+                            self.line(&format!("Console.WriteLine({e});"));
+                        }
+                    }
+                    // a record per line
+                    Level::Rows if *dims == 1 => {
+                        self.line(&format!(
+                            "Console.WriteLine({});",
+                            leaves.join(" + \" \" + ")
+                        ));
+                    }
+                    _ => {
+                        self.line(&format!(
+                            "Console.Write({} + \" \");",
+                            leaves.join(" + \" \" + ")
+                        ));
+                    }
+                }
                 for k in (0..bounds.len()).rev() {
                     self.close();
-                    if k > 0 {
+                    // a row of a table per line
+                    if k > 0 && level == Level::Rows {
                         self.line("Console.WriteLine();");
                     }
                 }
-                if bounds.len() == 1 {
+                if level == Level::Single {
                     self.line("Console.WriteLine();");
                 }
                 for (v, _, _) in bounds {
@@ -2082,27 +2298,30 @@ impl<'a> Gen<'a> {
                 "`{}` has more than two dimensions: it is not printed",
                 d.name
             )),
-            Ty::Rec(r) => {
-                let e = self.rec_expr(&name, r);
-                if label {
-                    self.line(&format!(
-                        "Console.WriteLine({} + {e});",
-                        quote(&format!("{} = ", d.name))
-                    ));
-                } else {
+            Ty::Rec(r) if !label && level == Level::Each => {
+                for e in self.rec_exprs(&name, r) {
                     self.line(&format!("Console.WriteLine({e});"));
                 }
             }
-            _ => {
-                if label {
-                    self.line(&format!(
-                        "Console.WriteLine({} + {name});",
-                        quote(&format!("{} = ", d.name))
-                    ));
-                } else {
-                    self.line(&format!("Console.WriteLine({name});"));
-                }
+            Ty::Rec(r) => {
+                let e = self.rec_expr(&name, r);
+                self.print_one(&e, &d.name, closing);
             }
+            _ => self.print_one(&name, &d.name, closing),
+        }
+    }
+
+    /// A value that is one token (or a record's tokens) in one line.
+    fn print_one(&mut self, expr: &str, var: &str, closing: bool) {
+        if self.labels {
+            self.line(&format!(
+                "Console.WriteLine({} + {expr});",
+                quote(&format!("{var} = "))
+            ));
+        } else if closing {
+            self.line(&format!("Console.WriteLine({expr});"));
+        } else {
+            self.line(&format!("Console.Write({expr} + \" \");"));
         }
     }
 }
@@ -2361,7 +2580,8 @@ class Program
     }
 
     /// The expected output is what the console program prints (checked against dotnet's own
-    /// output of these programs).
+    /// output of these programs; the program also prints a space after each array element, which
+    /// [`same_output`] ignores).
     #[test]
     fn console_output_is_what_the_program_prints() {
         for (name, expected) in [
@@ -2369,7 +2589,7 @@ class Program
             ("search", "2\n"),
             ("search_none", "-1\n"),
             ("max", "2\n9.25\n"),
-            ("select", "3\n3 7 2 \n"),
+            ("select", "3\n3 7 2\n"),
             ("wind", "2\n"),
         ] {
             let (_, src, test) = cases().into_iter().find(|c| c.0 == name).unwrap();
@@ -2387,5 +2607,83 @@ class Program
         )
         .unwrap();
         assert_eq!(text, "4\n10\n30 5 20 8\n");
+    }
+
+    const RECORDS: &str = "Be:\nn∈N,\nm∈N,\nhallgatok∈Hallgato[1..n],\nHallgato=(nev:S x jegy:N)\nKi:\ndb∈N\nEf:\n-\nUf:\ndb=DARAB(i=1..n, hallgatok[i].jegy=m)\n";
+    const RECORDS_TEST: &str = "n: 3\nm: 5\nhallgatok:\n  - nev: Anna\n    jegy: 5\n  - nev: Bence\n    jegy: 3\n  - nev: Csilla\n    jegy: 5\ndb: 2\n";
+
+    fn layout_of(items: &[(&str, Level, bool)]) -> IoLayout {
+        let mut l = IoLayout::default();
+        for (n, level, join) in items {
+            l.set_level(n, *level);
+            l.set_join(n, *join);
+        }
+        l
+    }
+
+    /// Where the line breaks of the input are is a choice per variable.
+    #[test]
+    fn console_input_follows_the_layout() {
+        let (spec, _) = build(RECORDS);
+        let text = |l: &IoLayout| console_input_with(&spec, RECORDS_TEST, l).unwrap();
+        // the default: a record per line
+        assert_eq!(
+            text(&IoLayout::default()),
+            "3\n5\nAnna 5\nBence 3\nCsilla 5\n"
+        );
+        let one = layout_of(&[("hallgatok", Level::Single, false)]);
+        assert_eq!(text(&one), "3\n5\nAnna 5 Bence 3 Csilla 5\n");
+        let each = layout_of(&[("hallgatok", Level::Each, false)]);
+        assert_eq!(text(&each), "3\n5\nAnna\n5\nBence\n3\nCsilla\n5\n");
+        // n and m in one line
+        let joined = layout_of(&[("m", Level::Auto, true)]);
+        assert_eq!(text(&joined), "3 5\nAnna 5\nBence 3\nCsilla 5\n");
+        // and the records in that line too
+        let all = layout_of(&[("m", Level::Auto, true), ("hallgatok", Level::Single, true)]);
+        assert_eq!(text(&all), "3 5 Anna 5 Bence 3 Csilla 5\n");
+        // a join after a value that is not in one line is ignored
+        let no = layout_of(&[("hallgatok", Level::Rows, true)]);
+        assert_eq!(text(&no), text(&IoLayout::default()));
+    }
+
+    #[test]
+    fn console_input_of_a_table_follows_the_layout() {
+        let (spec, _) = build("Be:\nn∈N,\nm∈N,\nt∈Z[1..n,1..m]\nKi:\nb∈Z\nEf:\n-\nUf:\nb=t[n,m]\n");
+        let test = "n: 2\nm: 3\nt: [[1, 5, 2], [7, 0, 3]]\nb: 3\n";
+        let text = |l: &IoLayout| console_input_with(&spec, test, l).unwrap();
+        assert_eq!(text(&IoLayout::default()), "2\n3\n1 5 2\n7 0 3\n");
+        assert_eq!(
+            text(&layout_of(&[("t", Level::Single, false)])),
+            "2\n3\n1 5 2 7 0 3\n"
+        );
+        assert_eq!(
+            text(&layout_of(&[("t", Level::Each, false)])),
+            "2\n3\n1\n5\n2\n7\n0\n3\n"
+        );
+    }
+
+    /// The program reads what [`console_input_with`] writes: the shape of the loops follows the
+    /// layout.
+    #[test]
+    fn the_program_follows_the_layout() {
+        let code = |l: &IoLayout| {
+            let (spec, program) = build(RECORDS);
+            generate_with(&spec, &program, Inputs::Console, RECORDS_TEST, l)
+                .unwrap()
+                .code
+        };
+        let default = code(&IoLayout::default());
+        assert!(default.contains("hallgatok[j].nev = sor[0];"), "{default}");
+        let one = code(&layout_of(&[("hallgatok", Level::Single, false)]));
+        assert!(one.contains("hallgatok[j].nev = sor[p++];"), "{one}");
+        assert_eq!(one.matches("Console.ReadLine()").count(), 3, "{one}");
+        let each = code(&layout_of(&[("hallgatok", Level::Each, false)]));
+        assert!(
+            each.contains("hallgatok[j].jegy = int.Parse(Console.ReadLine());"),
+            "{each}"
+        );
+        let joined = code(&layout_of(&[("m", Level::Auto, true)]));
+        assert!(joined.contains("int m = int.Parse(sor[1]);"), "{joined}");
+        assert_eq!(joined.matches("Console.ReadLine()").count(), 2, "{joined}");
     }
 }

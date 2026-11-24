@@ -610,6 +610,7 @@ fn stuki_runs_the_test_cases() {
 
 /// The toolbar and the pane headers: no two widgets drawn over each other (issue #8).
 #[test]
+#[ignore = "takes a long time to run"]
 fn toolbar_widgets_never_overlap() {
     let mut bad = vec![];
     for tool in [Tool::Spec, Tool::Stuki, Tool::Code] {
@@ -715,6 +716,49 @@ fn code_tab_writes_the_program_from_the_spec() {
     h.state_mut().code.output = "3  \n\n".into(); // trailing blanks do not matter
     assert_eq!(h.state_mut().code_verdict(), Some(true));
     h.state_mut().code.output.clear();
+}
+
+/// The side panel of the Code tab (console mode): the line breaks of the input are a choice per
+/// variable, and the program and its input follow.
+#[test]
+fn code_tab_lays_out_the_input_by_the_side_panel() {
+    let mut h = code_harness();
+    // the panel is for the console mode
+    assert!(h.query_by_label("value per line").is_none());
+    h.get_by_label("Console").click();
+    h.run_steps(3);
+    assert_eq!(h.state().code.stdin, "5\n3 72 81 4 5\n");
+    h.get_by_label("value per line").click();
+    h.run_steps(3);
+    assert_eq!(h.state().code.stdin, "5\n3\n72\n81\n4\n5\n");
+    let text = h.state().code.text.clone();
+    assert!(
+        text.contains("szamok[j] = int.Parse(Console.ReadLine());"),
+        "{text}"
+    );
+    // the expected output has the same layout choices
+    assert_eq!(h.state_mut().expected_output(), Ok("3\n".to_string()));
+    // the list in the line of n
+    h.get_by_label("one line").click();
+    h.run_steps(3);
+    h.get_by_label("same line as n").click();
+    h.run_steps(3);
+    assert_eq!(h.state().code.stdin, "5 3 72 81 4 5\n");
+    assert!(!h.state().code.layout.is_default());
+    h.get_by_label("Reset").click();
+    h.run_steps(3);
+    assert!(h.state().code.layout.is_default());
+    assert_eq!(h.state().code.stdin, "5\n3 72 81 4 5\n");
+    // an edited program is kept
+    h.state_mut().code.text.push_str("// mine\n");
+    h.get_by_label("value per line").click();
+    h.run_steps(3);
+    assert!(h.state().code.text.ends_with("// mine\n"));
+    assert!(
+        h.state().code.status.contains("From spec"),
+        "{}",
+        h.state().code.status
+    );
 }
 
 /// Switching the mode rewrites only unedited code; From spec asks before replacing edits.

@@ -371,7 +371,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 `--workspace` also checks the terminal app (`tui/`) and the Android crate, which the plain commands skip. The lints every package shares are in `[workspace.lints]` in `Cargo.toml`; `tui/` adds a stricter block of its own.
 
-The tests in `tests/dotnet.rs` build and run real C# programs, so they need the .NET SDK (`dotnet` on the PATH) and take about half a minute. Without the SDK they skip themselves; set `SPECI_REQUIRE_DOTNET=1` to make a missing SDK a failure instead. Run only them with `cargo test --test dotnet`. In a debug build `toolbar_widgets_never_overlap` takes several minutes: it lays out the toolbar at about a thousand sizes (use `cargo test --release` if it is in the way).
+The tests in `tests/dotnet.rs` and `tests/dotnet_layouts.rs` build and run real C# programs, so they need the .NET SDK (`dotnet` on the PATH) and take about a minute together. Without the SDK they skip themselves; set `SPECI_REQUIRE_DOTNET=1` to make a missing SDK a failure instead. Run only them with `cargo test --test dotnet --test dotnet_layouts`.
 
 CI runs these on every push, builds the desktop app on Windows, Linux and macOS, and builds a debug APK.
 
@@ -385,6 +385,7 @@ CI runs these on every push, builds the desktop app on Windows, Linux and macOS,
 | `src/app/` | the window: toolbar, panes, results, stepper, dialogs, background evaluation |
 | `src/stuki/` | the structogram editor: model, layout, canvas, colors, PNG, and the web Stuki's JSON (`.st` files and the `stuki` block of `.sp` files) |
 | `src/stuki/run/` | running structograms on test cases: compiler and machine |
+| `src/csharp.rs`, `src/ioplan.rs`, `src/dotnet.rs` | writing the C# program from the specification; the line layout of its console input and output; building and running it with `dotnet` |
 | `src/platform.rs` | what differs between the desktop systems and Android |
 | `android/` | the Android wrapper crate |
 | `tests/` | case studies, edge cases, limits, a fuzzer that damages valid documents, and the tests that need the .NET SDK |
@@ -393,7 +394,7 @@ How the pieces are tested against each other:
 
 - `tests/cases.rs` holds case studies from the ELTE manual.
 - `tests/fuzz.rs` damages valid documents in thousands of small ways. The parser, the evaluator and the structogram runner must answer each with a verdict or a message, never a panic.
-- `tests/dotnet.rs` builds and runs the generated C# programs with `dotnet`. Tests that depend on an outside tool go in `tests/`, not next to the unit tests.
+- `tests/dotnet.rs` and `tests/dotnet_layouts.rs` build and run the generated C# programs with `dotnet` (the second tries every line layout of the console input and output: the program reads the text `ioplan` lays out and prints the expected output). Tests that depend on an outside tool go in `tests/`, not next to the unit tests.
 - The UI tests (`src/app/tests.rs`) drive the real window with [egui_kittest](https://crates.io/crates/egui_kittest).
 
 `SKILL.md` is a manual of the specification language as the online editor defines it, usable as a skill for AI assistants.

@@ -1,40 +1,18 @@
 //! Tests that need the .NET SDK (`dotnet` on the PATH): they build and run real C# programs,
-//! which takes seconds per run, so they live here and not next to the unit tests.
-//!
-//! Without `dotnet` every test here is skipped with a message. Set `SPECI_REQUIRE_DOTNET=1`
-//! (e.g. on a CI machine that has the SDK) to turn the skip into a failure.
-//!
-//! The runs share one project directory in the temp dir, so the tests take turns (`serial`).
+//! which takes seconds per run, so they live here and not next to the unit tests. See
+//! `common/mod.rs` for how they are skipped without the SDK.
 
 use speci_local::csharp::{self, Converted, Inputs};
 use speci_local::dotnet::{Msg, Run, error_lines};
 use speci_local::stuki::model::Program;
-use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+mod common;
+use common::{LIMIT, run, serial};
 
 const SPEC: &str = "Be:\nn∈N,\nszamok∈N[1..n]\n\nKi:\ndb∈N\n\nEf:\n-\n\nUf:\ndb=DARAB(i=1..n, szamok[i] mod 2 = 1)\n";
 const TEST: &str = "n: 5\nszamok: [3, 72, 81, 4, 5]\ndb: 3\n";
 const FOREVER: &str = "using System;\nclass Program { static void Main() { Console.WriteLine(\"up\"); while (true) { } } }\n";
-/// A build takes a few seconds, the first one on a machine much longer.
-const LIMIT: Duration = Duration::from_secs(180);
-
-/// Holds the lock for one test, or is `None` when there is no `dotnet` and the test is skipped.
-fn serial() -> Option<MutexGuard<'static, ()>> {
-    static LOCK: Mutex<()> = Mutex::new(());
-    let have = std::process::Command::new("dotnet")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success());
-    if !have {
-        assert!(
-            std::env::var_os("SPECI_REQUIRE_DOTNET").is_none(),
-            "SPECI_REQUIRE_DOTNET is set, but `dotnet` is not usable"
-        );
-        eprintln!("no dotnet: skipped");
-        return None;
-    }
-    Some(LOCK.lock().unwrap_or_else(|e| e.into_inner()))
-}
 
 fn convert(inputs: Inputs) -> Converted {
     match csharp::convert(SPEC, "odd numbers", &Program::default(), TEST, inputs) {
@@ -43,38 +21,6 @@ fn convert(inputs: Inputs) -> Converted {
             panic!("conversion failed: {e}")
         }
     }
-}
-
-/// What a finished run reported.
-struct Finished {
-    output: String,
-    build: String,
-    done: String,
-}
-
-fn finish(run: &Run) -> Finished {
-    let mut f = Finished {
-        output: String::new(),
-        build: String::new(),
-        done: String::new(),
-    };
-    let start = Instant::now();
-    loop {
-        match run.try_recv() {
-            Some(Msg::Out(s)) => f.output.push_str(&s),
-            Some(Msg::Build(s)) => f.build.push_str(&s),
-            Some(Msg::Done(s)) => {
-                f.done = s;
-                return f;
-            }
-            None => std::thread::sleep(Duration::from_millis(20)),
-        }
-        assert!(start.elapsed() < LIMIT, "the run never finished");
-    }
-}
-
-fn run(text: &str, input: &str) -> Finished {
-    finish(&Run::start(text.into(), input.into(), false, || {}))
 }
 
 /// The program with the test's values written into it prints them.

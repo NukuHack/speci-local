@@ -197,6 +197,8 @@ A harmadik, **C# Code** fül egyetlen C# szerkesztő. Szintaxiskiemelése, behú
 
 - **From spec + stuki**: a specifikációból és a struktogramokból megírja a C# programot, a SKILL.md 7. fejezetének szabályai szerint (egy struktogramelem egy utasítás, a tömbök a specifikáció indexeit tartják: `int[] t = new int[n + 1];`, a 0. elem kihasználatlan). Ha a Stuki fül még üres, a *From spec* által építendő struktogramokat használja. Függvényes specifikációnál a változók `static` mezők. Ami nem fordítható le, azt `// TODO:` megjegyzés jelzi, és a figyelmeztetés ikonra mutatva kilistázza a szerkesztő. Ha a kódot módosítottad, a gomb megkérdezi, felülírja-e.
 - **Test values / Console**: *Test values* esetén a kiválasztott teszteset bemenő értékei a programba vannak írva, és a program kiírja az eredményeket (`db = 3`). *Console* esetén a program a konzolról olvas (egy skalár soronként, egy tömb soronként), és csak az értékeket írja ki. A kapcsoló átírja a programot, ha nem módosítottad; a *Fill from test case* a teszteset bemenetét a megfelelő formában a bemeneti mezőbe írja. A bemeneti mező alatt az **Expected output** a kiválasztott teszteset várt kimenetét mutatja, pontosan úgy, ahogy a program kiírja; futtatás után mellette ott a *matches* / *differs* jelzés, így nem kell visszaváltani a specifikációra az ellenőrzéshez.
+- **Lines** (a bal oldali keskeny panel, *Console* módban): minden bemenethez és kimenethez külön kiválasztható, hol vannak a sortörések. Egy tömb lehet **egy sorban** (`1 2 3`) vagy **soronként egy érték** (`1` ↵ `2` ↵ `3`); egy táblázat egy sorban, **soronként egy sor**ral (alapérték) vagy soronként egy értékkel; egy rekord és a rekordok tömbje egy sorban, **rekordonként egy sor**ral vagy **mezőnként egy sor**ral. A *same line as …* jelölőnégyzettel egy változó az előtte lévő sorában folytatódik (`n m` egy sorban, vagy `n` és utána a tömb); ez akkor kínált, ha az előző fix szélességű (szám vagy rekord), és a változó befér egy sorba. A program és a bemeneti mező (és az *Expected output*) együtt követi a választást, ha a programot nem módosítottad; ha módosítottad, a státuszsor jelzi, hogy a *From spec + stuki* gombbal írhatod újra. A *Reset* az alapértelmezett elrendezést állítja vissza. Telefonon a panel nincs, a *Test values* módban pedig nincs mit elrendezni.
+- **Rekordok**: a rekordok (`Hallgato=(nev:S x jegy:N)`) `struct`-tá fordulnak (egy típus egyszer, akárhányszor használod), a rekordok tömbje és táblázata is olvasható és kiírható. Az olyan mező, amely nem egyszerű érték (tömb vagy másik rekord), nem olvasható be és nem íródik ki: erről a figyelmeztetés ikon szól.
 - **Run** (Ctrl+Enter): a `PATH`-on lévő `dotnet`-tel lefordítja és lefuttatja a programot (Linuxon, Windowson, macOS-en), a háttérben, **Stop** gombbal megállítható. A fordítási hibák a Output panelben jelennek meg, a hibás sorok pirosan kiemelve. A cél keretrendszert a telepített SDK határozza meg. Telefonon a futtatás nem érhető el.
 - A generált program alapból **nem kezel kivételt és nem ellenőriz bemenetet**; ha ilyet szeretnél, add hozzá kézzel.
 - **Mentés**: a C# program a projekt `.sp` fájljába is bekerül, a Stuki blokk alá egy `/*--- code ---` megjegyzésblokkba (a fájl így is érvényes specifikáció marad). Megnyitáskor visszaolvassa; ami fájlból jött, azt a *From spec + stuki* soha nem írja felül megkérdezés nélkül. A C# saját `*/` jele a blokkban `*\/`-ként van elmentve, és visszaolvasáskor eredetire áll vissza.
@@ -372,7 +374,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 A `--workspace` a terminálos alkalmazást (`tui/`) és az Android crate-et is ellenőrzi, amit az egyszerű parancsok kihagynak. A csomagok közös lintjei a `Cargo.toml` `[workspace.lints]` részében vannak; a `tui/` ezen felül szigorúbb saját blokkot használ.
 
-A `tests/dotnet.rs` tesztjei valódi C# programokat fordítanak és futtatnak, ezért kell hozzájuk a .NET SDK (`dotnet` a PATH-on), és fél percig tartanak. SDK nélkül kihagyják magukat; a `SPECI_REQUIRE_DOTNET=1` beállítással a hiányzó SDK hibának számít. Csak ezeket a `cargo test --test dotnet`. Debug módban a `toolbar_widgets_never_overlap` több percig tart: az eszköztárat körülbelül ezer méretben rakja ki (ha zavar, használd a `cargo test --release` parancsot).
+A `tests/dotnet.rs` és a `tests/dotnet_layouts.rs` tesztjei valódi C# programokat fordítanak és futtatnak, ezért kell hozzájuk a .NET SDK (`dotnet` a PATH-on), és együtt egy percig tartanak. SDK nélkül kihagyják magukat; a `SPECI_REQUIRE_DOTNET=1` beállítással a hiányzó SDK hibának számít. Csak ezeket a `cargo test --test dotnet --test dotnet_layouts`.
 
 A CI minden pushnál lefuttatja ezeket, megépíti az asztali alkalmazást Windowsra, Linuxra és macOS-re, és készít egy debug APK-t.
 
@@ -386,6 +388,7 @@ A CI minden pushnál lefuttatja ezeket, megépíti az asztali alkalmazást Windo
 | `src/app/` | az ablak: eszköztár, panelek, eredmények, Stepper, párbeszédablakok, háttérben futó kiértékelés |
 | `src/stuki/` | a struktogramszerkesztő: modell, elrendezés, vászon, színek, PNG és a webes Stuki JSON-ja (`.st` fájlok és a `.sp` fájlok `stuki` blokkja) |
 | `src/stuki/run/` | struktogramok futtatása teszteseteken: fordító és gép |
+| `src/csharp.rs`, `src/ioplan.rs`, `src/dotnet.rs` | a C# program írása a specifikációból; a konzolos bemenet és kimenet sortörés-elrendezése; a program fordítása és futtatása a `dotnet`-tel |
 | `src/platform.rs` | ami az asztali rendszerek és az Android között eltér |
 | `android/` | az androidos burok crate |
 | `tests/` | esettanulmányok, határesetek, korlátok, egy fuzzer, amely érvényes dokumentumokat ront el, és a .NET SDK-t igénylő tesztek |
@@ -394,7 +397,7 @@ Hogyan ellenőrzik egymást a részek:
 
 - A `tests/cases.rs` az ELTE kézikönyvének esettanulmányait tartalmazza.
 - A `tests/fuzz.rs` érvényes dokumentumokat ront el több ezer apró módon. A parsernek, a kiértékelőnek és a struktogramfuttatónak mindegyikre ítélettel vagy üzenettel kell válaszolnia, soha nem pánikkal.
-- A `tests/dotnet.rs` a generált C# programokat fordítja és futtatja a `dotnet`-tel. A külső eszközre támaszkodó tesztek a `tests/` mappába kerülnek, nem az egységtesztek mellé.
+- A `tests/dotnet.rs` és a `tests/dotnet_layouts.rs` a generált C# programokat fordítja és futtatja a `dotnet`-tel (az utóbbi minden sortörés-elrendezést kipróbál: a program az `ioplan` által megírt bemenetet olvassa, és a várt kimenetet írja). A külső eszközre támaszkodó tesztek a `tests/` mappába kerülnek, nem az egységtesztek mellé.
 - A felülettesztek (`src/app/tests.rs`) a valódi ablakot vezérlik az [egui_kittest](https://crates.io/crates/egui_kittest) segítségével.
 
 A `SKILL.md` a specifikációs nyelv kézikönyve úgy, ahogy az online szerkesztő meghatározza; AI-asszisztensek skilljeként is használható.

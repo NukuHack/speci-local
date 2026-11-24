@@ -16,6 +16,7 @@ pub mod dotnet;
 mod editor;
 pub mod eval;
 pub mod file;
+pub mod ioplan;
 pub mod parser;
 #[cfg(feature = "gui")]
 pub mod platform;
