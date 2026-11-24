@@ -739,69 +739,6 @@ fn code_tab_keeps_edits_and_asks_before_replacing_them() {
     assert!(!h.state().code.text.contains("// mine"));
 }
 
-/// With dotnet on the PATH: build and run, with the test's values and with console input.
-#[test]
-fn code_tab_runs_with_dotnet() {
-    use crate::ui::I_RUN;
-    if std::process::Command::new("dotnet")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        eprintln!("no dotnet: skipped");
-        return;
-    }
-    let mut h = code_harness();
-    let finish = |h: &mut Harness<'static, App>| {
-        h.run_steps(2);
-        for _ in 0..6000 {
-            if h.state().code.run.is_none() {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            h.step();
-        }
-        panic!("the run never finished");
-    };
-    h.get_by_label(&format!("{I_RUN}  Run")).click();
-    finish(&mut h);
-    assert_eq!(
-        h.state().code.output.trim(),
-        "db = 3",
-        "{}",
-        h.state().code.status
-    );
-
-    h.get_by_label("Console").click();
-    h.run_steps(3);
-    h.get_by_label(&format!("{I_RUN}  Run")).click();
-    finish(&mut h);
-    assert_eq!(
-        h.state().code.output.trim(),
-        "3",
-        "{}",
-        h.state().code.status
-    );
-    // what the program printed is what the test case expects
-    assert_eq!(h.state_mut().code_verdict(), Some(true));
-
-    // a compile error is shown with its line marked
-    h.state_mut().code.text = h
-        .state()
-        .code
-        .text
-        .replace("db = db + 1;", "db = db + oops;");
-    h.run_steps(2);
-    h.get_by_label(&format!("{I_RUN}  Run")).click();
-    finish(&mut h);
-    assert!(
-        h.state().code.output.contains("error CS0103"),
-        "{}",
-        h.state().code.output
-    );
-    assert!(!h.state().code.errors.is_empty());
-}
-
 /// The program is saved in the project file, read back, and counts as a change until then.
 #[test]
 fn the_program_is_saved_with_the_project_and_read_back() {

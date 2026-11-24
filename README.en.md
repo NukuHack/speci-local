@@ -366,10 +366,14 @@ Add `--target x86_64-linux-android` to build only for the emulator. The app logs
 ```sh
 cargo test                                   # unit, UI and integration tests
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-CI runs all three on every push, builds the desktop app on Windows, Linux and macOS, and builds a debug APK.
+`--workspace` also checks the terminal app (`tui/`) and the Android crate, which the plain commands skip. The lints every package shares are in `[workspace.lints]` in `Cargo.toml`; `tui/` adds a stricter block of its own.
+
+The tests in `tests/dotnet.rs` build and run real C# programs, so they need the .NET SDK (`dotnet` on the PATH) and take about half a minute. Without the SDK they skip themselves; set `SPECI_REQUIRE_DOTNET=1` to make a missing SDK a failure instead. Run only them with `cargo test --test dotnet`. In a debug build `toolbar_widgets_never_overlap` takes several minutes: it lays out the toolbar at about a thousand sizes (use `cargo test --release` if it is in the way).
+
+CI runs these on every push, builds the desktop app on Windows, Linux and macOS, and builds a debug APK.
 
 | Path | What it holds |
 | --- | --- |
@@ -383,12 +387,13 @@ CI runs all three on every push, builds the desktop app on Windows, Linux and ma
 | `src/stuki/run/` | running structograms on test cases: compiler and machine |
 | `src/platform.rs` | what differs between the desktop systems and Android |
 | `android/` | the Android wrapper crate |
-| `tests/` | case studies, edge cases, limits, and a fuzzer that damages valid documents |
+| `tests/` | case studies, edge cases, limits, a fuzzer that damages valid documents, and the tests that need the .NET SDK |
 
 How the pieces are tested against each other:
 
 - `tests/cases.rs` holds case studies from the ELTE manual.
 - `tests/fuzz.rs` damages valid documents in thousands of small ways. The parser, the evaluator and the structogram runner must answer each with a verdict or a message, never a panic.
+- `tests/dotnet.rs` builds and runs the generated C# programs with `dotnet`. Tests that depend on an outside tool go in `tests/`, not next to the unit tests.
 - The UI tests (`src/app/tests.rs`) drive the real window with [egui_kittest](https://crates.io/crates/egui_kittest).
 
 `SKILL.md` is a manual of the specification language as the online editor defines it, usable as a skill for AI assistants.

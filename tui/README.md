@@ -136,7 +136,7 @@ outside insert mode is imported.
 
 ```sh
 cargo fmt -p speci-tui
-cargo clippy -p speci-tui --all-targets   # pedantic + nursery, see the lint block in src/main.rs
+cargo clippy -p speci-tui --all-targets   # workspace lints + pedantic + nursery, see the block in src/main.rs
 cargo test -p speci-tui                   # drives the app with scripted keys on an in-memory terminal
 ```
 

@@ -103,6 +103,12 @@ impl Run {
         writeln!(w, "{line}").is_ok() && w.flush().is_ok()
     }
 
+    /// True while the program itself runs (not while it is built). The flag outlives the
+    /// `Run`, so a test can check that dropping it killed the program.
+    pub fn alive_flag(&self) -> Arc<AtomicBool> {
+        self.alive.clone()
+    }
+
     pub fn elapsed(&self) -> Duration {
         self.started.elapsed()
     }
@@ -337,62 +343,4 @@ fn write_project(dir: &Path, text: &str, major: u32) -> std::io::Result<()> {
     };
     write_if_changed("speci.csproj", &proj)?;
     write_if_changed("Program.cs", text)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn have_dotnet() -> bool {
-        Command::new("dotnet").arg("--version").output().is_ok()
-    }
-
-    const FOREVER: &str = "using System;\nclass Program { static void Main() { Console.WriteLine(\"up\"); while (true) { } } }\n";
-
-    /// Stopping, or just dropping a run, kills the program itself.
-    #[test]
-    fn a_dropped_run_leaves_nothing_running() {
-        if !have_dotnet() {
-            return;
-        }
-        for explicit_stop in [true, false] {
-            let run = Run::start(FOREVER.into(), String::new(), false, || {});
-            // wait until the program says it is up
-            let mut out = String::new();
-            let start = Instant::now();
-            while !out.contains("up") {
-                assert!(
-                    start.elapsed() < Duration::from_secs(120),
-                    "never started: {out}"
-                );
-                while let Some(m) = run.try_recv() {
-                    match m {
-                        Msg::Out(s) => out.push_str(&s),
-                        Msg::Build(s) => panic!("{s}"),
-                        Msg::Done(s) => panic!("ended early: {s}"),
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            assert!(run.alive.load(Ordering::Relaxed));
-            let alive = run.alive.clone();
-            if explicit_stop {
-                run.stop();
-                // the end message comes
-                let start = Instant::now();
-                loop {
-                    match run.try_recv() {
-                        Some(Msg::Done(s)) => {
-                            assert_eq!(s, "Stopped");
-                            break;
-                        }
-                        _ => std::thread::sleep(Duration::from_millis(10)),
-                    }
-                    assert!(start.elapsed() < Duration::from_secs(10), "not stopped");
-                }
-            }
-            drop(run);
-            assert!(!alive.load(Ordering::Relaxed), "the program still runs");
-        }
-    }
 }

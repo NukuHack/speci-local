@@ -7,6 +7,9 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "speci-tui"
 path = "src/main.rs"

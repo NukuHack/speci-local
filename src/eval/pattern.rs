@@ -71,7 +71,7 @@ impl Eval<'_> {
                 for i in range {
                     at(env, i);
                     let v = self.eval(&args[0], env)?;
-                    acc = self.combine(e, &args[2], &args[1], &args[0], acc, v, env)?;
+                    acc = self.combine(e, args, acc, v, env)?;
                 }
                 Ok(acc)
             }
@@ -205,17 +205,17 @@ impl Eval<'_> {
 }
 
 impl Eval<'_> {
-    /// `acc op v` for the general SUM: `op` is `+`, `*`, `and`, `or` or the name of a function.
+    /// `acc op v` for the general SUM, whose arguments are `[f, start, op]`: `op` is `+`,
+    /// `*`, `and`, `or` or the name of a function.
     fn combine(
         &mut self,
         e: &Expr,
-        op: &Expr,
-        start: &Expr,
-        f: &Expr,
+        args: &[Expr],
         acc: Value,
         v: Value,
         env: &mut Env,
     ) -> R<Value> {
+        let (f, start, op) = (&args[0], &args[1], &args[2]);
         let ExprKind::Var(name) = &*op.kind else {
             unreachable!("checked by the parser")
         };

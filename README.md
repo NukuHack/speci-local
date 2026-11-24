@@ -367,10 +367,14 @@ A `cargo apk build -p speci-local-android --release` aláírókulcsot igényel: 
 ```sh
 cargo test                                   # egység-, felület- és integrációs tesztek
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-A CI minden pushnál lefuttatja mindhármat, megépíti az asztali alkalmazást Windowsra, Linuxra és macOS-re, és készít egy debug APK-t.
+A `--workspace` a terminálos alkalmazást (`tui/`) és az Android crate-et is ellenőrzi, amit az egyszerű parancsok kihagynak. A csomagok közös lintjei a `Cargo.toml` `[workspace.lints]` részében vannak; a `tui/` ezen felül szigorúbb saját blokkot használ.
+
+A `tests/dotnet.rs` tesztjei valódi C# programokat fordítanak és futtatnak, ezért kell hozzájuk a .NET SDK (`dotnet` a PATH-on), és fél percig tartanak. SDK nélkül kihagyják magukat; a `SPECI_REQUIRE_DOTNET=1` beállítással a hiányzó SDK hibának számít. Csak ezeket a `cargo test --test dotnet`. Debug módban a `toolbar_widgets_never_overlap` több percig tart: az eszköztárat körülbelül ezer méretben rakja ki (ha zavar, használd a `cargo test --release` parancsot).
+
+A CI minden pushnál lefuttatja ezeket, megépíti az asztali alkalmazást Windowsra, Linuxra és macOS-re, és készít egy debug APK-t.
 
 | Útvonal | Tartalma |
 | --- | --- |
@@ -384,12 +388,13 @@ A CI minden pushnál lefuttatja mindhármat, megépíti az asztali alkalmazást 
 | `src/stuki/run/` | struktogramok futtatása teszteseteken: fordító és gép |
 | `src/platform.rs` | ami az asztali rendszerek és az Android között eltér |
 | `android/` | az androidos burok crate |
-| `tests/` | esettanulmányok, határesetek, korlátok, és egy fuzzer, amely érvényes dokumentumokat ront el |
+| `tests/` | esettanulmányok, határesetek, korlátok, egy fuzzer, amely érvényes dokumentumokat ront el, és a .NET SDK-t igénylő tesztek |
 
 Hogyan ellenőrzik egymást a részek:
 
 - A `tests/cases.rs` az ELTE kézikönyvének esettanulmányait tartalmazza.
 - A `tests/fuzz.rs` érvényes dokumentumokat ront el több ezer apró módon. A parsernek, a kiértékelőnek és a struktogramfuttatónak mindegyikre ítélettel vagy üzenettel kell válaszolnia, soha nem pánikkal.
+- A `tests/dotnet.rs` a generált C# programokat fordítja és futtatja a `dotnet`-tel. A külső eszközre támaszkodó tesztek a `tests/` mappába kerülnek, nem az egységtesztek mellé.
 - A felülettesztek (`src/app/tests.rs`) a valódi ablakot vezérlik az [egui_kittest](https://crates.io/crates/egui_kittest) segítségével.
 
 A `SKILL.md` a specifikációs nyelv kézikönyve úgy, ahogy az online szerkesztő meghatározza; AI-asszisztensek skilljeként is használható.

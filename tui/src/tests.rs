@@ -780,7 +780,7 @@ fn the_project_file_holds_the_program_and_the_structograms() {
         b.stuki.program.diagrams.len(),
         a.stuki.program.diagrams.len()
     );
-    assert!(b.stuki.program.diagrams.len() >= 1);
+    assert!(!b.stuki.program.diagrams.is_empty());
     // it was opened from a file: converting asks first
     b.tool = Tool::Code;
     keys(&mut b, "<Space>f");
@@ -850,49 +850,6 @@ fn the_code_tool_draws_only_ascii_in_ascii_mode() {
     }
     keys(&mut a, "?");
     assert_ascii(&render(&mut a, 150, 40), "code help");
-}
-
-/// With dotnet on the PATH: build and run with the test's values and with console input.
-#[test]
-fn the_program_runs_with_dotnet() {
-    if !have_dotnet() {
-        eprintln!("no dotnet: skipped");
-        return;
-    }
-    let mut a = code_app();
-    keys(&mut a, "<Space>r");
-    assert!(a.code.running());
-    finish_run(&mut a);
-    assert_eq!(a.code.output.trim(), "db = 3", "{}", a.code.status);
-    assert!(a.code.status.starts_with("Finished"), "{}", a.code.status);
-
-    // the console mode: the input box is the program's input, the output is compared
-    keys(&mut a, "<Space>m<Space>r");
-    finish_run(&mut a);
-    assert_eq!(a.code.output.trim(), "3", "{}", a.code.status);
-    let spec = a.doc.spec.clone();
-    let test = a.doc.tests[0].clone();
-    assert_eq!(a.code.verdict(&spec, &test), Some(true));
-    let s = render(&mut a, 150, 40);
-    assert!(s.contains("matches"), "{s}");
-    // another input gives another output
-    keys(&mut a, "<C-w>2ggdGi1<CR>7<CR><Esc>:run<CR>");
-    finish_run(&mut a);
-    assert_eq!(a.code.verdict(&spec, &test), Some(false));
-    assert!(render(&mut a, 150, 40).contains("differs"));
-
-    // a compile error marks its line, and Enter in the output goes there
-    keys(&mut a, "<C-w>1");
-    let broken = a.code.text().replace("db = db + 1;", "db = db + oops;");
-    a.code.ed.set_text(&broken);
-    keys(&mut a, "<Space>r");
-    finish_run(&mut a);
-    assert!(a.code.output.contains("error CS0103"), "{}", a.code.output);
-    assert!(!a.code.ed.errors.is_empty());
-    let line = a.code.ed.errors[0];
-    keys(&mut a, "gg<C-w>3<CR>");
-    assert_eq!(a.code.focus, crate::code::CodePane::Editor);
-    assert_eq!(a.code.ed.line_col().0, line);
 }
 
 #[test]

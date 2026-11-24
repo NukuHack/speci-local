@@ -16,11 +16,39 @@ eframe = { version = "0.37.0", default-features = false }
 egui_kittest = "0.37"
 winit = { version = "0.30", default-features = false }
 
+# The lints every package shares (each package opts in with `[lints] workspace = true`).
+# CI runs clippy with `-D warnings`, so these are errors there. Only lints that the code
+# passes today are listed: add a stricter one together with the fixes it needs.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+# leftovers of debugging
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+# resource handling
+mem_forget = "warn"
+empty_drop = "warn"
+rc_mutex = "warn"
+create_dir = "warn"
+verbose_file_reads = "warn"
+undocumented_unsafe_blocks = "warn"
+# numbers and patterns
+lossy_float_literal = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+# `Instant - Duration` panics when it underflows (timers in the dotnet runner and the UI)
+unchecked_time_subtraction = "warn"
+
 [package]
 name = "speci-local"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[lints]
+workspace = true
 
 [features]
 default = ["gui"]
