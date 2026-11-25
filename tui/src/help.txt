@@ -32,6 +32,9 @@ The result opens in the Structogram tool and runs on your test cases right away.
 (If the specification has errors, fix them first; Space f tells you which line.)
 
 # Leader keys: Specification tool @spec
+Space g  ·  write the reduction table (visszavezetési táblázat) under the specification:
+            for every theorem (SZUMMA, DARAB, KERES, …) its template and what each part of it is
+            here, as a comment; Space g again updates it (:reduction)
 Space r  ·  evaluate now (F5)
 Space a  ·  auto-evaluation on / off
 Space t / d  ·  new / delete test case
@@ -46,6 +49,7 @@ The third tool is one C# editor (vim keys, highlighting, the indentation follows
 Space f  ·  write the program from the specification and the structograms (asks first when
             you edited it; if the Structogram tool is empty the From spec ones are used)
 Space m  ·  the program uses the test case's values  /  reads them from the console
+Space F  ·  Input, Process and Output as functions of their own (:functions [on|off])
 Space r (F5)  ·  build and run it with dotnet from the PATH;  Space x stops it
 Space i  ·  console mode: fill the input box from the test case
 Space y or c  ·  copy the program;  Space b / B  ·  copy / open a carbon.now.sh link
@@ -53,11 +57,12 @@ Space y or c  ·  copy the program;  Space b / B  ·  copy / open a carbon.now.s
 Tab / Shift-Tab  ·  program, console input (console mode only), output
 Output pane: j k Ctrl-d Ctrl-u gg G scroll,  Enter jumps to the first compile error
 Console mode while the program runs: Enter on a line of the input box sends it (:send text too)
-:convert  :mode test|console  :run  :stop  :fill  :carbon [open]  :send text  :notes
+:convert  :mode test|console  :functions  :run  :stop  :fill  :carbon [open]  :send text  :notes
 :notes  ·  what the conversion could not translate (the // TODO lines) or guessed
 Under the input box the test case's expected output is shown, and after a run
 the output is compared with it (matches / differs).
-It is saved in the .sp file with the specification and the structograms.
+It is saved in the .sp file with the specification and the structograms, and so are the
+settings (test values or console, functions, line layout).
 
 # Editing text (vim keys) @editing
 i a I A o O  ·  insert

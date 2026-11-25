@@ -658,8 +658,8 @@ impl Editor {
         loop {
             let e = self.le(s);
             let (mut a, mut acc) = (s, 0);
-            for i in s..e {
-                let c = cw(self.t[i]);
+            for (i, &ch) in self.t.iter().enumerate().take(e).skip(s) {
+                let c = cw(ch);
                 if acc + c > w && i > a {
                     rows.push(Row { line, a, b: i });
                     a = i;
@@ -756,8 +756,7 @@ impl Editor {
             }
             let mut x = area.x + gutter as u16;
             let line_bg = if err { Some(th.err_bg) } else { None };
-            for i in row.a..row.b {
-                let c = self.t[i];
+            for (i, &c) in self.t.iter().enumerate().take(row.b).skip(row.a) {
                 let mut st = toks.get(i).copied().unwrap_or(Tok::Text).style(th);
                 if let Some(bg) = line_bg {
                     st = st.bg(bg);

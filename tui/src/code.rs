@@ -5,6 +5,8 @@
 use crate::editor::{Editor, Lang};
 use speci_local::csharp::{self, Converted, Inputs};
 use speci_local::dotnet::{self, Msg, Run};
+use speci_local::file::CodeCfg;
+use speci_local::ioplan::IoLayout;
 use std::hash::{Hash, Hasher};
 
 /// Where the program gets its input.
@@ -32,6 +34,13 @@ impl Source {
         }
     }
 
+    pub const fn from_inputs(i: Inputs) -> Self {
+        match i {
+            Inputs::Test => Self::Test,
+            Inputs::Console => Self::Console,
+        }
+    }
+
     pub const fn other(self) -> Self {
         match self {
             Self::Test => Self::Console,
@@ -56,6 +65,13 @@ pub struct Code {
     pub ed: Editor,
     pub input: Editor,
     pub source: Source,
+    /// Input, Process and Output are functions of their own.
+    pub functions: bool,
+    /// Where the console program breaks its input and output into lines (read from the project
+    /// file and kept there; this app has no panel to change it).
+    pub layout: IoLayout,
+    /// The settings as they are in the saved file.
+    saved_cfg: CodeCfg,
     pub focus: CodePane,
     /// What the last conversion wrote: the program is "unedited" while it still equals this.
     generated: String,
@@ -93,6 +109,9 @@ impl Code {
             ed: Editor::new(Lang::Csharp, CODE_ID, ""),
             input: Editor::new(Lang::Plain, INPUT_ID, ""),
             source: Source::Test,
+            functions: false,
+            layout: IoLayout::default(),
+            saved_cfg: CodeCfg::default(),
             focus: CodePane::Editor,
             generated: String::new(),
             saved: String::new(),
@@ -120,11 +139,21 @@ impl Code {
 
     /// Changed since the file was saved or opened?
     pub fn dirty(&self) -> bool {
-        self.ed.text() != self.saved
+        self.ed.text() != self.saved || self.cfg() != self.saved_cfg
     }
 
     pub fn mark_saved(&mut self) {
         self.saved = self.ed.text();
+        self.saved_cfg = self.cfg();
+    }
+
+    /// The settings the project file keeps.
+    pub fn cfg(&self) -> CodeCfg {
+        CodeCfg {
+            source: self.source.inputs(),
+            functions: self.functions,
+            layout: self.layout.clone(),
+        }
     }
 
     /// Edited since the last conversion (or came from a file)? Then it is never replaced
@@ -140,9 +169,19 @@ impl Code {
 
     /// The program of a project that was opened (or a new one). A program that came from a
     /// file counts as edited.
-    pub fn reset(&mut self, text: Option<String>) {
+    pub fn reset(&mut self, text: Option<String>, settings: Option<&str>) {
         self.stop();
         self.run = None;
+        // a project without settings has the default ones
+        let cfg = CodeCfg::from_line(settings);
+        self.source = Source::from_inputs(cfg.source);
+        self.functions = cfg.functions;
+        self.layout = cfg.layout.clone();
+        self.saved_cfg = cfg;
+        self.key = None;
+        if self.source == Source::Test && self.focus == CodePane::Input {
+            self.focus = CodePane::Editor;
+        }
         let text = text.unwrap_or_default();
         self.ed.set_text(&text);
         self.ed.p = 0;
@@ -254,9 +293,10 @@ impl Code {
         {
             return r.clone();
         }
+        let layout = self.layout.clone();
         let r = speci_local::parse(spec)
             .map_err(|d| format!("the specification has errors ({})", d[0].title))
-            .and_then(|s| csharp::console_output(&s, test));
+            .and_then(|s| csharp::console_output_with(&s, test, &layout));
         self.expected = Some((key, r.clone()));
         r
     }

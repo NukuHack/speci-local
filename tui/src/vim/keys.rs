@@ -17,9 +17,7 @@ impl Vim {
         let (l0, l1) = (ls(&ed.t, p), le(&ed.t, p));
         // shorthands like `D` = `d$`, keeping the count
         let alias = |s: &str| {
-            let mut v: Vec<char> = n1
-                .map(|n| n.to_string().chars().collect())
-                .unwrap_or_default();
+            let mut v: Vec<char> = n1.map_or_default(|n| n.to_string().chars().collect());
             v.extend(s.chars());
             v.extend_from_slice(rest);
             v
@@ -278,9 +276,9 @@ impl Vim {
                 if ch != ESC {
                     self.save(ed);
                     let (s, e) = self.selection(&ed.t, p);
-                    for k in s..e {
-                        if ed.t[k] != '\n' {
-                            ed.t[k] = ch;
+                    for c in &mut ed.t[s..e] {
+                        if *c != '\n' {
+                            *c = ch;
                         }
                     }
                     ed.changed = true;

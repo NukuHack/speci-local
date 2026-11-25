@@ -57,6 +57,36 @@ const OPEN: &str = "/*--- test ---\n";
 const STUKI_OPEN: &str = "/*--- stuki ---\n";
 const CODE_OPEN: &str = "/*--- code ---\n";
 const CLOSE: &str = "---*/";
+/// The settings of the Code tool a project keeps in its code block (both the window app and the
+/// terminal app), so that opening the project sets them as they were.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct CodeCfg {
+    /// Where the program gets its input.
+    pub source: crate::csharp::Inputs,
+    /// Input, Process and Output are functions of their own.
+    pub functions: bool,
+    /// Where the console program breaks its input and output into lines.
+    pub layout: crate::ioplan::IoLayout,
+}
+
+impl CodeCfg {
+    /// The line of JSON the file keeps; `None`: these are the defaults (nothing to keep).
+    pub fn to_line(&self) -> Option<String> {
+        if *self == Self::default() {
+            return None;
+        }
+        serde_json::to_string(self).ok()
+    }
+
+    /// Read from the file's line; a file without one (or with one that can't be read) has the
+    /// defaults.
+    pub fn from_line(line: Option<&str>) -> Self {
+        line.and_then(|l| serde_json::from_str(l).ok())
+            .unwrap_or_default()
+    }
+}
+
 /// What the first line of the code block starts with when it holds the Code tab's settings.
 const SETTINGS: &str = "// speci-local: ";
 

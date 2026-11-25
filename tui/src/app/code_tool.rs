@@ -119,12 +119,14 @@ impl App {
     pub(super) fn code_convert_now(&mut self) {
         self.sync();
         let test = self.selected_test();
-        match csharp::convert(
+        match csharp::convert_opts(
             &self.doc.spec,
             &self.doc.title,
             &self.stuki.program,
             &test,
             self.code.source.inputs(),
+            &self.code.layout,
+            self.code.functions,
         ) {
             Ok(c) => {
                 let from = if c.own_structograms {
@@ -168,12 +170,27 @@ impl App {
         }
     }
 
+    /// Input, Process and Output as functions of their own, or not.
+    pub fn code_set_functions(&mut self, on: bool) {
+        self.code.functions = on;
+        if self.code.unedited() {
+            self.code_convert_now();
+        } else if !self.code.is_empty() {
+            self.code.status = format!(
+                "Functions {}: your program was kept, Space f writes it again",
+                if on { "on" } else { "off" }
+            );
+        } else {
+            self.code.status = format!("Functions {}", if on { "on" } else { "off" });
+        }
+    }
+
     /// The input of the selected test case, as the generated program reads it.
     pub(super) fn code_fill(&mut self) {
         let test = self.selected_test();
         match speci_local::parse(&self.doc.spec)
             .map_err(|d| d[0].title.clone())
-            .and_then(|s| csharp::console_input(&s, &test))
+            .and_then(|s| csharp::console_input_with(&s, &test, &self.code.layout))
         {
             Ok(text) => {
                 self.code.input.set_text(&text);

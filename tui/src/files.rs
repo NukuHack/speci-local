@@ -113,8 +113,7 @@ impl Browser {
                     let f = self
                         .filter
                         .as_ref()
-                        .map(|f| f.text().to_lowercase())
-                        .unwrap_or_default();
+                        .map_or_default(|f| f.text().to_lowercase());
                     if want && name.to_lowercase().contains(&f) {
                         v.push(Entry { name, dir });
                     }

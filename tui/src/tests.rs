@@ -628,7 +628,7 @@ fn the_first_visit_writes_the_program_and_that_is_not_a_change() {
     let text = a.code.text();
     assert!(text.contains("class Program"), "{text}");
     assert!(
-        text.contains("int[] szamok = new int[] { 0, 3, 72, 81, 4, 5 };"),
+        text.contains("szamok = new int[] { 0, 3, 72, 81, 4, 5 };"),
         "{text}"
     );
     assert!(!a.code.dirty() && !a.project_dirty());
@@ -864,4 +864,71 @@ fn show_code_screens() {
         let _ = std::fs::write("/tmp/code_test.txt", render(&mut a, 150, 40));
         let _ = std::fs::write("/tmp/code_narrow.txt", render(&mut a, 70, 24));
     }
+}
+
+#[test]
+fn functions_setting_is_saved_with_the_project_and_set_again() {
+    let dir = std::env::temp_dir().join(format!("speci-tui-cfg-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("cfg.sp");
+    let mut a = code_app();
+    assert!(!a.code.text().contains("static void Input"));
+    // Space F: Input, Process and Output become functions; the unedited program is rewritten
+    keys(&mut a, "<Space>F");
+    assert!(a.code.functions);
+    assert!(
+        a.code.text().contains("static void Process("),
+        "{}",
+        a.code.text()
+    );
+    assert!(a.code.dirty());
+    assert!(render(&mut a, 150, 40).contains("functions"));
+    keys(&mut a, "<Space>m");
+    assert_eq!(a.code.source, crate::code::Source::Console);
+    keys(&mut a, &format!(":w {}<CR>", f.display()));
+    assert!(!a.code.dirty());
+    let text = std::fs::read_to_string(&f).unwrap();
+    assert!(text.contains("// speci-local: {"), "{text}");
+    assert!(text.contains("\"functions\":true"), "{text}");
+
+    let mut b = App::new(true);
+    b.load(&f);
+    assert!(b.code.functions && b.code.source == crate::code::Source::Console);
+    assert!(!b.code.text().contains("// speci-local"));
+    assert!(!b.code.dirty());
+    // :functions off keeps an edited program and says so
+    b.tool = Tool::Code;
+    keys(&mut b, ":functions off<CR>");
+    assert!(!b.code.functions && b.code.text().contains("static void Process("));
+    assert!(b.code.status.contains("kept"), "{}", b.code.status);
+    assert!(b.code.dirty());
+
+    // a new project has the defaults again
+    let mut c = code_app();
+    keys(&mut c, "<Space>F");
+    assert!(c.code.dirty());
+    c.code.mark_saved(); // (a project with unsaved changes asks before it is replaced)
+    keys(&mut c, "<Space>n");
+    assert!(!c.code.functions);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn reduction_table_is_written_under_the_specification() {
+    let mut a = fresh();
+    assert_eq!(a.tool, Tool::Spec);
+    keys(&mut a, "<Space>g");
+    let spec = a.spec_ed.text();
+    assert!(spec.contains("/* Visszavezetés"), "{spec}");
+    assert!(spec.contains("db = DARAB(i=e..u, T(i))"), "{spec}");
+    assert_eq!(a.doc.spec, spec);
+    assert!(speci_local::parse(&spec).is_ok(), "{spec}");
+    // again: updated, not doubled
+    keys(&mut a, ":reduction<CR>");
+    assert_eq!(a.spec_ed.text(), spec);
+    // nothing to reduce
+    a.spec_ed.set_text("Be: n∈N\nKi: m∈N\nEf: -\nUf: m=n+1\n");
+    keys(&mut a, "<Space>g");
+    assert!(a.status.contains("nothing to reduce"), "{}", a.status);
+    assert!(!a.spec_ed.text().contains("Visszavezetés"));
 }

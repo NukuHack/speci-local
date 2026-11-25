@@ -16,9 +16,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use speci_local::diag::{Diagnostic, Pane as DiagPane};
 use speci_local::eval::Trace;
 use speci_local::file::{
-    Doc, code_of, from_clipboard, from_project, from_sp, to_compact, to_project,
+    Doc, code_of, code_settings_of, from_clipboard, from_project, from_sp, to_compact,
+    to_project_with,
 };
 use speci_local::parser::Spec;
+use speci_local::reduction;
 use speci_local::stuki::format as stformat;
 use speci_local::stuki::from_spec;
 use speci_local::stuki::model::Program;
@@ -345,6 +347,39 @@ impl App {
     }
 
     /// Copy the editors' texts into the document.
+    /// The reduction table of the specification's theorems is written under it (an earlier one
+    /// is replaced).
+    pub fn spec_reduction(&mut self) {
+        self.tool = Tool::Spec;
+        self.sync();
+        let spec = match parse(&self.doc.spec) {
+            Ok(s) => s,
+            Err(d) => {
+                let at = match d.first() {
+                    Some(d) if d.line > 0 => format!(" (line {}: {})", d.line, d.title),
+                    Some(d) => format!(" ({})", d.title),
+                    None => String::new(),
+                };
+                return self.say(format!(
+                    "Fix the specification first, then write the reduction{at}"
+                ));
+            }
+        };
+        let Some(block) = reduction::table(&spec) else {
+            return self.say(
+                "No theorem (SZUMMA, DARAB, KERES, …) in the specification: nothing to reduce",
+            );
+        };
+        let text = reduction::apply(&self.doc.spec, &block);
+        let at = text
+            .rfind(reduction::MARK)
+            .map_or(text.len(), |b| text[..b].chars().count());
+        self.spec_ed.set_text(&text);
+        self.spec_ed.p = at;
+        self.sync();
+        self.say("Reduction table written under the specification (Space g again updates it)");
+    }
+
     fn sync(&mut self) {
         let s = self.spec_ed.text();
         if s != self.doc.spec {
@@ -519,7 +554,7 @@ impl App {
         self.saved = doc.clone();
         self.doc = doc;
         self.path = path;
-        self.code.reset(None);
+        self.code.reset(None, None);
         self.current = 0;
         self.results.clear();
         self.spec_diags.clear();
@@ -633,7 +668,7 @@ impl App {
                                 doc,
                                 stuki: None,
                                 code,
-                                code_settings: None,
+                                code_settings: code_settings_of(&text),
                             },
                             Some(e),
                         )
@@ -643,11 +678,11 @@ impl App {
                 if doc.title.is_empty() {
                     doc.title = path
                         .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                        .map_or_default(|s| s.to_string_lossy().to_string());
                 }
                 self.reset_doc(doc, Some(path.to_path_buf()));
-                self.code.reset(project.code);
+                self.code
+                    .reset(project.code, project.code_settings.as_deref());
                 let mut msg = format!("Opened {}", path.display());
                 match (project.stuki, problem) {
                     (_, Some(e)) => msg += &format!(" ({e})"),
@@ -732,7 +767,12 @@ impl App {
         self.sync();
         let path = Kind::Spec.with_ext(path);
         // the whole project; a file without structograms or program stays a plain `.sp`
-        let text = to_project(&self.doc, &self.stuki.program, &self.code.text());
+        let text = to_project_with(
+            &self.doc,
+            &self.stuki.program,
+            &self.code.text(),
+            self.code.cfg().to_line().as_deref(),
+        );
         match std::fs::write(&path, text) {
             Ok(()) => {
                 self.say(format!("Saved {}", path.display()));
@@ -1068,6 +1108,12 @@ impl App {
                 Some('c' | 'C') => self.code_set_source(Source::Console),
                 _ => self.code_set_source(self.code.source.other()),
             },
+            "functions" | "fn" => match arg {
+                "on" | "1" => self.code_set_functions(true),
+                "off" | "0" => self.code_set_functions(false),
+                _ => self.code_set_functions(!self.code.functions),
+            },
+            "reduction" | "red" => self.spec_reduction(),
             "stop" => {
                 self.code.stop();
                 self.code.status = "Stopping…".into();
@@ -1378,6 +1424,8 @@ impl App {
             'x' if self.tool == Tool::Code => self.command("stop"),
             'm' if self.tool == Tool::Code => self.command("mode"),
             'i' if self.tool == Tool::Code => self.code_fill(),
+            'F' if self.tool == Tool::Code => self.code_set_functions(!self.code.functions),
+            'g' if self.tool == Tool::Spec => self.spec_reduction(),
             'b' if self.tool == Tool::Code => self.code_carbon(false),
             'B' if self.tool == Tool::Code => self.code_carbon(true),
             'w' => self.save(false),

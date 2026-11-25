@@ -7,6 +7,7 @@ use super::theme::{card, pane_title};
 use crate::csharp::{self, Inputs};
 use crate::dotnet;
 use crate::editor::{Lang, code_editor, cursor_of};
+use crate::file::CodeCfg;
 use crate::ioplan::{self, IoLayout, Kind as IoKind, Level};
 use crate::platform;
 use crate::ui::{ACCENT, GREEN, I_CLOSE, I_OK, I_RUN, I_WAND, I_WARN, RED};
@@ -24,6 +25,15 @@ pub enum Source {
     Console,
 }
 
+impl From<Inputs> for Source {
+    fn from(i: Inputs) -> Source {
+        match i {
+            Inputs::Test => Source::Test,
+            Inputs::Console => Source::Console,
+        }
+    }
+}
+
 impl From<Source> for Inputs {
     fn from(s: Source) -> Inputs {
         match s {
@@ -31,18 +41,6 @@ impl From<Source> for Inputs {
             Source::Console => Inputs::Console,
         }
     }
-}
-
-/// The settings of the Code tab a project file keeps (in its code block), so that opening the
-/// project sets them as they were.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
-#[serde(default)]
-pub struct CodeCfg {
-    pub source: Source,
-    /// Input, Process and Output are functions of their own.
-    pub functions: bool,
-    /// Where the console program breaks its input and output into lines.
-    pub layout: IoLayout,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -120,7 +118,7 @@ impl Code {
     /// The settings the project file keeps.
     pub(super) fn cfg(&self) -> CodeCfg {
         CodeCfg {
-            source: self.source,
+            source: self.source.into(),
             functions: self.functions,
             layout: self.layout.clone(),
         }
@@ -128,11 +126,7 @@ impl Code {
 
     /// The settings as the line of JSON in the file; `None`: they are the defaults.
     pub(super) fn cfg_json(&self) -> Option<String> {
-        let cfg = self.cfg();
-        if cfg == CodeCfg::default() {
-            return None;
-        }
-        serde_json::to_string(&cfg).ok()
+        self.cfg().to_line()
     }
 }
 
@@ -142,10 +136,8 @@ impl App {
     pub(super) fn reset_code(&mut self, text: Option<String>, settings: Option<String>) {
         self.code_stop();
         // a project without settings (or with unreadable ones) has the default ones
-        let cfg: CodeCfg = settings
-            .and_then(|j| serde_json::from_str(&j).ok())
-            .unwrap_or_default();
-        self.code.source = cfg.source;
+        let cfg = CodeCfg::from_line(settings.as_deref());
+        self.code.source = cfg.source.into();
         self.code.functions = cfg.functions;
         self.code.layout = cfg.layout.clone();
         self.code.saved_cfg = cfg;

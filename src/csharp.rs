@@ -16,7 +16,7 @@ use crate::stuki::run::header;
 use std::collections::{HashMap, HashSet};
 
 /// Where the program gets its input.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum Inputs {
     /// The values of one test case, written into the program.
     #[default]

@@ -758,8 +758,7 @@ fn draw_code_tool(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         } else {
             all.iter()
                 .find(|(q, ..)| *q == p)
-                .map(|(_, _, long)| (*long).to_string())
-                .unwrap_or_default()
+                .map_or_default(|(_, _, long)| (*long).to_string())
         }
     };
     let spec = app.doc.spec.clone();
@@ -773,8 +772,13 @@ fn draw_code_tool(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             format!("{l}:{c}")
         } else {
             format!(
-                "{} · test {}/{} · {l}:{c}",
+                "{}{} · test {}/{} · {l}:{c}",
                 app.code.source.label(),
+                if app.code.functions {
+                    " · functions"
+                } else {
+                    ""
+                },
                 app.current + 1,
                 app.doc.tests.len().max(1)
             )
@@ -1186,7 +1190,15 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
             ),
             _ => String::new(),
         },
-        Tool::Code => format!("reads {}  ", app.code.source.label()),
+        Tool::Code => format!(
+            "reads {}{}  ",
+            app.code.source.label(),
+            if app.code.functions {
+                " · functions"
+            } else {
+                ""
+            }
+        ),
     };
     let lw: usize = spans.iter().map(Span::width).sum();
     let rw = right.chars().count();
