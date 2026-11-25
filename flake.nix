@@ -53,6 +53,7 @@
               ./assets
               ./tests
               ./android
+              ./tui
             ];
           };
           cargoLock.lockFile = ./Cargo.lock;

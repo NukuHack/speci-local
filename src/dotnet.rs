@@ -186,7 +186,7 @@ impl Job {
                 format!("The .NET SDK is too old (version {major}): .NET 6 or newer is needed"),
             );
         }
-        let dir = std::env::temp_dir().join("speci-local-csharp");
+        let dir = std::env::temp_dir().join(DIR_NAME);
         if let Err(e) = write_project(&dir, &self.text, major) {
             return end(
                 &self,
@@ -308,15 +308,35 @@ fn wait(child: &mut Child, stop: &AtomicBool) -> Option<ExitStatus> {
     }
 }
 
+/// The folder of the generated project, in the temp directory.
+const DIR_NAME: &str = "speci-local-csharp";
+
+/// Cuts the path of the project folder off the start of a message. The compiler spells the folder
+/// its own way (macOS: `/private/var/…` for `/var/…`, Windows: long names for `RUNNER~1`), so the
+/// folder is found by its name, not by the path it was made at.
+fn strip_dir(l: &str, dir: &str) -> String {
+    for sep in ['/', '\\'] {
+        let marker = format!("{DIR_NAME}{sep}");
+        if let Some(i) = l.find(&marker) {
+            let head = &l[..i];
+            // the path the message starts with, not one it mentions at its end (`[… .csproj]`)
+            let starts_with_path = head.starts_with('/') || head.as_bytes().get(1) == Some(&b':');
+            if starts_with_path && !head.contains(" [") {
+                return l[i + marker.len()..].to_string();
+            }
+        }
+    }
+    l.replace(&format!("{dir}/"), "")
+        .replace(&format!("{dir}\\"), "")
+}
+
 /// `Program.cs(3,9): error CS…` lines without the paths around them.
 fn clean_build(text: &str, dir: &Path) -> String {
     let dir = dir.display().to_string();
     let mut out = String::new();
     let mut seen = std::collections::HashSet::new();
     for l in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let l = l
-            .replace(&format!("{dir}/"), "")
-            .replace(&format!("{dir}\\"), "");
+        let l = strip_dir(l, &dir);
         let l = match l.rfind(" [") {
             Some(i) if l.ends_with(".csproj]") => l[..i].to_string(),
             _ => l,
@@ -343,4 +363,34 @@ fn write_project(dir: &Path, text: &str, major: u32) -> std::io::Result<()> {
     };
     write_if_changed("speci.csproj", &proj)?;
     write_if_changed("Program.cs", text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_messages_lose_the_project_path_on_every_system() {
+        let cs = "error CS0103: The name 'oops' does not exist in the current context";
+        let proj = "[/x/speci-local-csharp/speci.csproj]";
+        for (dir, reported) in [
+            // Linux
+            ("/tmp/speci-local-csharp", "/tmp/speci-local-csharp/"),
+            // macOS: the temp folder is a link, the compiler prints the real path
+            (
+                "/var/folders/ab/cd/T/speci-local-csharp",
+                "/private/var/folders/ab/cd/T/speci-local-csharp/",
+            ),
+            // Windows: the short name of the user folder against the long one
+            (
+                "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\speci-local-csharp",
+                "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\speci-local-csharp\\",
+            ),
+        ] {
+            let text = format!("{reported}Program.cs(22,27): {cs} {proj}\n");
+            let out = clean_build(&text, Path::new(dir));
+            assert_eq!(out, format!("Program.cs(22,27): {cs}\n"), "{dir}");
+            assert_eq!(error_lines(&out), [22]);
+        }
+    }
 }

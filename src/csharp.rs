@@ -288,6 +288,9 @@ enum Ty {
         zero: bool,
     },
     Rec(String),
+    /// A tuple (a function with several results, a `(a, b)` value); the parts may be named,
+    /// like `(bool found, int ind)`, so that both `.found` and `.Item1` work in C#.
+    Tup(Vec<(Option<String>, Ty)>),
 }
 
 impl Ty {
@@ -297,6 +300,14 @@ impl Ty {
 }
 
 type Fields = Vec<(String, Ty)>;
+
+/// Which part of a tuple `.f` is: a position (`.1`) or a name (`.found`).
+fn tuple_part(parts: &[(Option<String>, Ty)], f: &str) -> Option<usize> {
+    match f.parse::<usize>() {
+        Ok(i) => i.checked_sub(1).filter(|i| *i < parts.len()),
+        Err(_) => parts.iter().position(|(n, _)| n.as_deref() == Some(f)),
+    }
+}
 
 /// An ir of the structogram, parsed once so that the variables can be found before writing.
 enum Ir {
@@ -624,6 +635,50 @@ impl<'a> Gen<'a> {
             Ty::Arr { dims, elem, .. } => {
                 format!("{}[{}]", self.cs(elem), ",".repeat(dims.saturating_sub(1)))
             }
+            Ty::Tup(parts) => {
+                let parts: Vec<String> = parts
+                    .iter()
+                    .map(|(n, t)| match n {
+                        Some(n) => format!("{} {}", self.cs(t), id(n)),
+                        None => self.cs(t),
+                    })
+                    .collect();
+                format!("({})", parts.join(", "))
+            }
+        }
+    }
+
+    /// The names of the parts of what function `name` gives, when its definition is a pattern
+    /// (`KERES` → `found`, `ind`): the same names `.found` has in the specification.
+    fn part_names(&self, name: &str, n: usize) -> Vec<Option<String>> {
+        let names = match self.spec.funcs.get(name).map(|f| &*f.body.kind) {
+            Some(ExprKind::Macro { name: m, .. }) => {
+                crate::eval::result_names(crate::parser::macro_alias(m).unwrap_or(m))
+            }
+            _ => &[],
+        };
+        if names.len() == n {
+            names.iter().map(|x| Some(x.to_string())).collect()
+        } else {
+            vec![None; n]
+        }
+    }
+
+    /// The type of the result of function `name`: the one type of its codomain, or a tuple.
+    fn result_ty(&mut self, name: &str) -> Option<Ty> {
+        let cod = self.spec.funcs.get(name)?.cod.clone();
+        match cod.len() {
+            0 => None,
+            1 => Some(self.ty_of(&cod[0])),
+            n => {
+                let names = self.part_names(name, n);
+                let parts = cod
+                    .iter()
+                    .zip(names)
+                    .map(|(t, nm)| (nm, self.ty_of(t)))
+                    .collect();
+                Some(Ty::Tup(parts))
+            }
         }
     }
 
@@ -701,19 +756,13 @@ impl<'a> Gen<'a> {
                     .find(|(x, _)| x == f)
                     .map(|(_, t)| t)
                     .unwrap_or(Ty::Int),
+                Ty::Tup(parts) => tuple_part(&parts, f).map_or(Ty::Int, |i| parts[i].1.clone()),
                 _ => Ty::Int,
             },
             ExprKind::Call(name, args) => match name.as_str() {
                 "sqrt" => Ty::Real,
                 "abs" => args.first().map_or(Ty::Int, |a| self.kind(a)),
-                _ => {
-                    let cod = self
-                        .spec
-                        .funcs
-                        .get(name)
-                        .and_then(|f| f.cod.first().cloned());
-                    cod.map_or(Ty::Int, |t| self.ty_of(&t))
-                }
+                _ => self.result_ty(name).unwrap_or(Ty::Int),
             },
             ExprKind::Cases(arms, other) => arms
                 .first()
@@ -731,9 +780,38 @@ impl<'a> Gen<'a> {
             ExprKind::Macro { name, .. } => match name.as_str() {
                 "COUNT" | "DARAB" => Ty::Int,
                 "EXISTS" | "FORALL" => Ty::Bool,
-                _ => Ty::Int,
+                _ => {
+                    let names =
+                        crate::eval::result_names(crate::parser::macro_alias(name).unwrap_or(name));
+                    if names.len() < 2 {
+                        Ty::Int
+                    } else {
+                        Ty::Tup(
+                            names
+                                .iter()
+                                .map(|n| {
+                                    let t = match *n {
+                                        "found" => Ty::Bool,
+                                        "items" => Ty::Arr {
+                                            dims: 1,
+                                            elem: Box::new(Ty::Int),
+                                            zero: false,
+                                        },
+                                        _ => Ty::Int,
+                                    };
+                                    (Some(n.to_string()), t)
+                                })
+                                .collect(),
+                        )
+                    }
+                }
             },
-            ExprKind::Tuple(_) => Ty::Int,
+            ExprKind::Tuple(slots) => Ty::Tup(
+                slots
+                    .iter()
+                    .map(|s| (None, s.as_ref().map_or(Ty::Int, |x| self.kind(x))))
+                    .collect(),
+            ),
         }
     }
 
@@ -871,7 +949,16 @@ impl<'a> Gen<'a> {
                 let i: Vec<String> = idx.iter().map(|x| self.ex(x, 0)).collect();
                 (format!("{b}[{}]", i.join(", ")), PRIM)
             }
-            ExprKind::Field(a, f) => (format!("{}.{}", self.ex(a, PRIM), id(f)), PRIM),
+            ExprKind::Field(a, f) => {
+                let base = self.ex(a, PRIM);
+                // `.1`, `.2` are the positions of a tuple: `.Item1`, `.Item2` in C#
+                let part = if f.chars().all(|c| c.is_ascii_digit()) {
+                    format!("Item{f}")
+                } else {
+                    id(f)
+                };
+                (format!("{base}.{part}"), PRIM)
+            }
             ExprKind::Call(name, args) => self.call(name, args),
             ExprKind::Quant {
                 all,
@@ -1994,19 +2081,8 @@ impl<'a> Gen<'a> {
     }
 
     fn return_type(&mut self, name: &str) -> Option<String> {
-        let cod = self.spec.funcs.get(name)?.cod.clone();
-        let tys: Vec<String> = cod
-            .iter()
-            .map(|t| {
-                let t = self.ty_of(t);
-                self.cs(&t)
-            })
-            .collect();
-        match tys.len() {
-            0 => None,
-            1 => Some(tys[0].clone()),
-            _ => Some(format!("({})", tys.join(", "))),
-        }
+        let t = self.result_ty(name)?;
+        Some(self.cs(&t))
     }
 
     fn function(&mut self, d: &Diagram, name: &str, params: &[String], ir: &[Ir]) {
@@ -3082,5 +3158,24 @@ class Program
         let joined = code(&layout_of(&[("m", Level::Auto, true)]));
         assert!(joined.contains("m = int.Parse(sor[1]);"), "{joined}");
         assert_eq!(joined.matches("Console.ReadLine()").count(), 2, "{joined}");
+    }
+
+    const TUPLES: &str = "In: n∈N, utasok∈N[1..(2*n)]\nAux: van∈L, ind∈N\nOut: db∈N\nFn: tav: N->L x N, tav(i) = KERES(j=i+1..(2*n), utasok[j] = utasok[i])\nPre: n>0\nPost: (van, ind, ) = FELTMIN(i=1..((2*n)-1), tav(i).ind - i, tav(i).found) és db=tav(1).2\n";
+
+    /// A function with several results returns a tuple whose parts are named like in the
+    /// specification (`.ind`), and `.1`/`.2` become `.Item1`/`.Item2`.
+    #[test]
+    fn tuples_are_named_and_numbered() {
+        let (spec, program) = build(TUPLES);
+        let out = generate(&spec, &program, Inputs::Console, "").unwrap();
+        let code = &out.code;
+        assert!(
+            code.contains("static (bool found, int ind) tav(int i)"),
+            "{code}"
+        );
+        assert!(code.contains("tav(i).found"), "{code}");
+        assert!(code.contains("tav(i).ind - i"), "{code}");
+        assert!(code.contains("db = tav(1).Item2;"), "{code}");
+        assert!(!code.contains("tav(1).2"), "{code}");
     }
 }
