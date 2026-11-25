@@ -4,7 +4,8 @@
 use super::{App, Replace, Tab, Tool};
 use crate::editor::Completion;
 use crate::file::{
-    Doc, Project, code_of, from_clipboard, from_project, from_sp, to_compact, to_project,
+    Doc, Project, code_of, code_settings_of, from_clipboard, from_project, from_sp, to_compact,
+    to_project_with,
 };
 use crate::platform::{self, FileKind};
 use crate::stuki::{self, model::Program};
@@ -63,7 +64,7 @@ impl App {
             Replace::New => {
                 self.reset_doc(blank(), None);
                 self.stuki.reset(Program::default(), true);
-                self.reset_code(None);
+                self.reset_code(None, None);
                 self.tab = Tab::Spec;
                 self.stuki.status = "New project".into();
                 self.status = "New project".into();
@@ -83,7 +84,7 @@ impl App {
                 self.reset_doc(project.doc, None);
                 self.saved = Doc::default(); // imported, not saved anywhere yet
                 self.stuki.reset(project.stuki.unwrap_or_default(), false);
-                self.reset_code(project.code);
+                self.reset_code(project.code, project.code_settings);
                 self.tab = Tab::Spec;
                 self.status = "Project read from the clipboard (not saved to a file yet)".into();
                 self.stuki.status = self.status.clone();
@@ -125,12 +126,13 @@ impl App {
             Ok(p) => (p, None),
             Err(e) => {
                 let doc = from_sp(&text);
-                let code = code_of(&text);
+                let (code, code_settings) = (code_of(&text), code_settings_of(&text));
                 (
                     Project {
                         doc,
                         stuki: None,
                         code,
+                        code_settings,
                     },
                     Some(e),
                 )
@@ -147,7 +149,7 @@ impl App {
         // structograms that can't be read are not on screen: saving would leave them out
         self.stuki
             .reset(project.stuki.unwrap_or_default(), problem.is_none());
-        self.reset_code(project.code);
+        self.reset_code(project.code, project.code_settings);
         self.status = match problem {
             Some(e) => format!("Opened {}, but {e}", path.display()),
             None => format!("Opened {}", path.display()),
@@ -197,7 +199,12 @@ impl App {
     /// Write the whole project (specification, test cases and structograms) into one `.sp` file.
     pub(super) fn save_to(&mut self, path: PathBuf) {
         let path = FileKind::Spec.with_ext(path);
-        let text = to_project(&self.doc, &self.stuki.program, &self.code.text);
+        let text = to_project_with(
+            &self.doc,
+            &self.stuki.program,
+            &self.code.text,
+            self.code.cfg_json().as_deref(),
+        );
         match platform::write_file(&path, text.as_bytes()) {
             Ok(()) => {
                 self.status = format!("Saved {}", path.display());
@@ -309,7 +316,7 @@ impl App {
         match from_clipboard(text) {
             Ok(project) => {
                 self.tool = Tool::Spec;
-                self.request(Replace::Import(project));
+                self.request(Replace::Import(Box::new(project)));
             }
             Err(_) if self.tool == Tool::Stuki => {
                 self.stuki.status = "The clipboard doesn't contain a project: expected text starting with STUKI1: (or SPECI1:), a .st file's contents, or a Stuki link with data=.".into();

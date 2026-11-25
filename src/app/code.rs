@@ -33,11 +33,27 @@ impl From<Source> for Inputs {
     }
 }
 
+/// The settings of the Code tab a project file keeps (in its code block), so that opening the
+/// project sets them as they were.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct CodeCfg {
+    pub source: Source,
+    /// Input, Process and Output are functions of their own.
+    pub functions: bool,
+    /// Where the console program breaks its input and output into lines.
+    pub layout: IoLayout,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Code {
     pub text: String,
     pub source: Source,
+    /// The program has its Input, Process and Output as functions of their own.
+    pub functions: bool,
+    /// The settings as they are in the saved file.
+    saved_cfg: CodeCfg,
     /// What the last conversion wrote: the text is "unedited" while it still equals this.
     pub(super) generated: String,
     /// The text the program reads in the console mode.
@@ -93,19 +109,48 @@ fn code_editor_id() -> Id {
 impl Code {
     /// Changed since the file was saved or opened?
     pub(super) fn dirty(&self) -> bool {
-        self.text != self.saved
+        self.text != self.saved || self.cfg() != self.saved_cfg
     }
 
     pub(super) fn mark_saved(&mut self) {
         self.saved = self.text.clone();
+        self.saved_cfg = self.cfg();
+    }
+
+    /// The settings the project file keeps.
+    pub(super) fn cfg(&self) -> CodeCfg {
+        CodeCfg {
+            source: self.source,
+            functions: self.functions,
+            layout: self.layout.clone(),
+        }
+    }
+
+    /// The settings as the line of JSON in the file; `None`: they are the defaults.
+    pub(super) fn cfg_json(&self) -> Option<String> {
+        let cfg = self.cfg();
+        if cfg == CodeCfg::default() {
+            return None;
+        }
+        serde_json::to_string(&cfg).ok()
     }
 }
 
 impl App {
     /// Puts the program of a project that was opened (or a new one) in the editor. A program
     /// that came from a file counts as edited: it is never replaced without asking.
-    pub(super) fn reset_code(&mut self, text: Option<String>) {
+    pub(super) fn reset_code(&mut self, text: Option<String>, settings: Option<String>) {
         self.code_stop();
+        // a project without settings (or with unreadable ones) has the default ones
+        let cfg: CodeCfg = settings
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        self.code.source = cfg.source;
+        self.code.functions = cfg.functions;
+        self.code.layout = cfg.layout.clone();
+        self.code.saved_cfg = cfg;
+        // the settings were not changed by the user: nothing to rewrite
+        self.code.key = None;
         let text = text.unwrap_or_default();
         self.code.saved = text.clone();
         self.code.text = text;
@@ -122,6 +167,7 @@ impl App {
     /// The action bar of the Code tab.
     pub(super) fn code_menu(&mut self, ui: &mut egui::Ui) {
         let mut convert = false;
+        let mut functions_changed = false;
         ui.horizontal_wrapped(|ui| {
             self.vim_toggle(ui);
             ui.separator();
@@ -143,6 +189,14 @@ impl App {
                 .on_hover_text(
                     "The program reads its input from the console and prints its results",
                 );
+            ui.separator();
+            functions_changed = ui
+                .toggle_value(&mut self.code.functions, "Functions")
+                .on_hover_text(
+                    "Input, Process and Output as functions of their own\n(Main declares the variables and calls them)",
+                )
+                .changed();
+            ui.separator();
             if !self.doc.tests.is_empty() {
                 egui::ComboBox::from_id_salt("code-test")
                     .selected_text(format!("Test {}", self.current + 1))
@@ -187,6 +241,9 @@ impl App {
                 self.code_convert();
             }
         }
+        if functions_changed {
+            self.code_lines_changed();
+        }
         if convert {
             if !self.code.text.is_empty() && self.code.text != self.code.generated {
                 self.code.confirm = true;
@@ -204,13 +261,14 @@ impl App {
             .get(self.current)
             .cloned()
             .unwrap_or_default();
-        match csharp::convert_with(
+        match csharp::convert_opts(
             &self.doc.spec,
             &self.doc.title,
             &self.stuki.program,
             &test,
             self.code.source.into(),
             &self.code.layout,
+            self.code.functions,
         ) {
             Ok(c) => {
                 self.code.text = c.code.clone();
@@ -321,7 +379,7 @@ impl App {
         // how the console program breaks its input and output into lines (a phone has no room)
         if !self.narrow && self.code.source == Source::Console {
             let mut changed = false;
-            egui::Panel::left("code-lines")
+            egui::Panel::right("code-lines")
                 .frame(pane)
                 .resizable(true)
                 .default_size(200.0)
@@ -428,13 +486,13 @@ impl App {
         changed
     }
 
-    /// The line layout was changed: the program and its input are written for it again, unless
-    /// the program was edited.
+    /// The line layout or the functions setting was changed: the program and its input are
+    /// written for it again, unless the program was edited.
     fn code_lines_changed(&mut self) {
         if self.code.text.is_empty() || self.code.text == self.code.generated {
             self.code_convert();
         } else {
-            self.code.status = "Line layout changed: press “From spec + stuki” to write the program for it (your edits are kept until then)".into();
+            self.code.status = "Setting changed: press “From spec + stuki” to write the program for it (your edits are kept until then)".into();
         }
     }
 

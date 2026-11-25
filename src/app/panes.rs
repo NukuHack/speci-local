@@ -5,7 +5,7 @@ use super::{App, Tab, char_index, data_editor_id, spec_editor_id};
 use crate::diag::{Diagnostic, Pane};
 use crate::editor::{self, Lang, code_editor, cursor_of, replace, scan_symbols, set_cursor};
 use crate::ui::{ACCENT, GREEN, I_ADD, I_DATA, I_DEL, I_PASTE, I_SPEC, I_WAND, RED};
-use crate::{parse, platform, scaffold};
+use crate::{parse, platform, reduction, scaffold};
 use eframe::egui::{self, Color32, CornerRadius, Id, RichText, Stroke};
 
 /// Replace the selection of editor `id` (or insert at its cursor) with `s`.
@@ -128,6 +128,35 @@ impl App {
                     );
                 });
         });
+    }
+
+    /// The Reduction button: the reduction table of the specification's theorems is written
+    /// under it (an earlier one is replaced).
+    pub(super) fn spec_reduction(&mut self, ctx: &egui::Context) {
+        let spec = match parse(&self.doc.spec) {
+            Ok(spec) => spec,
+            Err(d) => {
+                let at = match d.first() {
+                    Some(d) if d.line > 0 => format!(" (line {}: {})", d.line, d.title),
+                    Some(d) => format!(" ({})", d.title),
+                    None => String::new(),
+                };
+                self.status = format!("Fix the specification first, then write the reduction{at}");
+                return;
+            }
+        };
+        let Some(block) = reduction::table(&spec) else {
+            self.status =
+                "No theorem (SZUMMA, DARAB, KERES, …) in the specification: nothing to reduce"
+                    .into();
+            return;
+        };
+        let text = reduction::apply(&self.doc.spec, &block);
+        let end = text.chars().count();
+        self.doc.spec = text;
+        set_cursor(ctx, spec_editor_id(), end);
+        self.status =
+            "Reduction table written under the specification (press again to update it)".into();
     }
 
     fn scaffold_test(&mut self) {

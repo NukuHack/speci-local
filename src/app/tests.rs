@@ -698,7 +698,7 @@ fn code_tab_writes_the_program_from_the_spec() {
     let text = h.state().code.text.clone();
     assert!(text.contains("class Program"), "{text}");
     assert!(
-        text.contains("int[] szamok = new int[] { 0, 3, 72, 81, 4, 5 };"),
+        text.contains("szamok = new int[] { 0, 3, 72, 81, 4, 5 };"),
         "{text}"
     );
     h.get_by_label("Console").click();
@@ -825,4 +825,83 @@ fn the_program_is_saved_with_the_project_and_read_back() {
     h.run_steps(4);
     assert!(h.state().code.text.contains("class Program"));
     assert!(!h.state().code.dirty());
+}
+
+/// The Functions toggle writes Input, Process and Output as functions; it and the other settings
+/// of the Code tab are saved in the project and set again when it is opened.
+#[test]
+fn code_settings_are_saved_with_the_project_and_set_again() {
+    let dir = TempDir::new("code-settings");
+    let path = dir.0.join("s.sp");
+    let mut h = code_harness();
+    assert!(!h.state().code.text.contains("static void Input"));
+    h.get_by_label("Functions").click();
+    h.run_steps(3);
+    let text = h.state().code.text.clone();
+    assert!(text.contains("static void Input(out int n"), "{text}");
+    assert!(text.contains("/* Process */"), "{text}");
+    h.get_by_label("Console").click();
+    h.run_steps(3);
+    h.get_by_label("value per line").click();
+    h.run_steps(3);
+    assert!(h.state().dirty());
+    h.state_mut().save_to(path.clone());
+    assert!(!h.state().dirty());
+    let file = std::fs::read_to_string(&path).unwrap();
+    assert!(file.contains("// speci-local: {"), "{file}");
+    assert!(file.contains("\"functions\":true"), "{file}");
+
+    let mut h2 = harness([1360.0, 900.0]);
+    h2.state_mut().load(&path);
+    assert!(h2.state().code.functions);
+    assert!(h2.state().code.source == super::code::Source::Console);
+    assert!(!h2.state().code.layout.is_default());
+    assert_eq!(h2.state().code.text, h.state().code.text);
+    assert!(!h2.state().code.text.contains("// speci-local"));
+    assert!(!h2.state().code.dirty());
+
+    // settings alone make the project unsaved, and are kept without a program
+    h2.state_mut().code.text.clear();
+    h2.state_mut().code.mark_saved();
+    h2.state_mut().code.functions = false;
+    assert!(h2.state().code.dirty());
+    h2.state_mut().code.functions = true;
+    let bare = dir.0.join("bare.sp");
+    h2.state_mut().save_to(bare.clone());
+    h.state_mut().load(&bare);
+    assert!(h.state().code.functions && h.state().code.text.is_empty());
+
+    // an unknown file has the defaults
+    h.state_mut().run(Replace::New);
+    assert!(!h.state().code.functions && h.state().code.layout.is_default());
+}
+
+/// The Reduction button writes the table under the specification, once.
+#[test]
+fn reduction_button_writes_the_table_under_the_spec() {
+    let mut h = harness([1360.0, 900.0]);
+    h.state_mut().doc = sample();
+    h.run_steps(3);
+    h.get_by_label(&format!("{I_WAND}  Reduction")).click();
+    h.run_steps(3);
+    let spec = h.state().doc.spec.clone();
+    assert!(spec.contains("/* Visszavezetés"), "{spec}");
+    assert!(spec.contains("db = DARAB(i=e..u, T(i))"), "{spec}");
+    assert!(crate::parser::parse(&spec).is_ok(), "{spec}");
+    assert!(h.state().dirty());
+    h.get_by_label(&format!("{I_WAND}  Reduction")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc.spec, spec);
+    assert_eq!(spec.matches("Visszavezetés").count(), 1);
+
+    h.state_mut().doc.spec = "Be: n∈N\nKi: m∈N\nEf: -\nUf: m=n+1\n".into();
+    h.run_steps(6); // evaluated; its status is not what is asked about
+    h.get_by_label(&format!("{I_WAND}  Reduction")).click();
+    h.run_steps(3);
+    assert!(
+        h.state().status.contains("nothing to reduce"),
+        "{}",
+        h.state().status
+    );
+    assert!(!h.state().doc.spec.contains("Visszavezetés"));
 }

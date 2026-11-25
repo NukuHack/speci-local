@@ -51,12 +51,26 @@ pub fn generate_with(
     test: &str,
     layout: &IoLayout,
 ) -> Result<Output, String> {
+    generate_opts(spec, program, inputs, test, layout, false)
+}
+
+/// [`generate_with`], and `functions`: the Input, Process and Output sections are methods of
+/// their own (`Main` declares the variables and calls them) instead of statements of `Main`.
+pub fn generate_opts(
+    spec: &Spec,
+    program: &Program,
+    inputs: Inputs,
+    test: &str,
+    layout: &IoLayout,
+    functions: bool,
+) -> Result<Output, String> {
     let env = match inputs {
         Inputs::Test => Some(data::load(spec, test).map_err(|d| d.title)?),
         Inputs::Console => None,
     };
     let mut g = Gen::new(spec);
     g.layout = layout.clone();
+    g.functions = functions;
     g.run(program, inputs, env)
 }
 
@@ -169,6 +183,19 @@ pub fn convert_with(
     inputs: Inputs,
     layout: &IoLayout,
 ) -> Result<Converted, ConvertError> {
+    convert_opts(spec_text, title, stuki, test, inputs, layout, false)
+}
+
+/// [`convert_with`], and `functions`: see [`generate_opts`].
+pub fn convert_opts(
+    spec_text: &str,
+    title: &str,
+    stuki: &Program,
+    test: &str,
+    inputs: Inputs,
+    layout: &IoLayout,
+    functions: bool,
+) -> Result<Converted, ConvertError> {
     let spec = crate::parser::parse(spec_text).map_err(|d| {
         ConvertError::Spec(match d.first() {
             Some(d) if d.line > 0 => format!(" (line {}: {})", d.line, d.title),
@@ -182,7 +209,8 @@ pub fn convert_with(
     } else {
         stuki.clone()
     };
-    let out = generate_with(&spec, &program, inputs, test, layout).map_err(ConvertError::Test)?;
+    let out = generate_opts(&spec, &program, inputs, test, layout, functions)
+        .map_err(ConvertError::Test)?;
     let mut notes = out.notes;
     let stdin = match inputs {
         Inputs::Console => match console_input_with(&spec, test, layout) {
@@ -314,6 +342,8 @@ struct Gen<'a> {
     english: bool,
     /// How the console program lays out its input and output.
     layout: IoLayout,
+    /// Input, Process and Output are methods of their own (`Main` only calls them).
+    functions: bool,
 }
 
 const KEYWORDS: &[&str] = &[
@@ -501,6 +531,7 @@ impl<'a> Gen<'a> {
             labels: false,
             english: spec.post_kw != "Uf:",
             layout: IoLayout::default(),
+            functions: false,
         };
         for d in &spec.decls {
             let ty = g.ty_of(&d.ty);
@@ -1473,94 +1504,213 @@ impl<'a> Gen<'a> {
         }
         self.pick_fallback();
 
-        // ---- Main
-        self.depth = 2;
-        let (kw_in, kw_out) = if self.english {
-            ("In", "Out")
-        } else {
-            ("Be", "Ki")
-        };
+        // ---- Main: Declaration, Input, Process, Output. Every section does its own job and
+        // nothing else: declaring is not reading, reading is not computing, computing is not
+        // printing (even where the program would be shorter without the walls).
         let ins: Vec<_> = spec.decls.iter().filter(|d| d.role == Role::In).collect();
         let outs: Vec<_> = spec.decls.iter().filter(|d| d.role == Role::Out).collect();
         let others: Vec<_> = spec.decls.iter().filter(|d| d.role != Role::In).collect();
-        let names = |v: &[&crate::parser::Decl]| {
-            v.iter()
-                .map(|d| d.name.clone())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        if !ins.is_empty() {
-            self.line(&format!("// {kw_in}: {}", names(&ins)));
-            match &env {
-                Some(env) => ins.iter().for_each(|d| self.test_decl(d, env)),
-                None => {
-                    let plan = self.io_plan(&ins, true);
-                    let needs = ins.iter().zip(&plan).any(|(d, e)| {
-                        e.level != Level::Each
-                            && self.vars.get(&d.name).is_some_and(|t| *t != Ty::Str)
-                    });
-                    let sor = self.fresh("sor");
-                    if needs {
-                        self.line(&format!("string[] {sor};"));
-                    }
-                    let mut off = 0;
-                    for (d, e) in ins.iter().zip(&plan) {
-                        if !e.join {
-                            off = 0;
-                        }
-                        off = self.read_decl(d, &sor, e.level, e.join, off);
-                    }
-                }
-            }
-            self.line("");
-        }
-        let mut vars: Vec<Var> = vec![];
-        for d in &others {
-            let ty = self.vars[&d.name].clone();
-            if !self.statics {
-                vars.push(Var {
-                    name: d.name.clone(),
-                    ty,
-                    decl: Some(d),
-                });
-            } else if matches!(ty, Ty::Arr { .. }) {
-                // a field: its array is made here
-                let alloc = self.alloc(&d.ty);
-                self.line(&format!("{} = {alloc};", id(&d.name)));
-            }
-        }
         let main_d = &program.diagrams[main];
         let main_ir = irs.remove(&main).unwrap_or_default();
-        for (name, ty) in self.locals(main_d, &main_ir, &[]) {
-            vars.push(Var {
+        let locals = self.locals(main_d, &main_ir, &[]);
+        let split = self.functions;
+        let fields = self.statics;
+        // the steps the algorithm starts with: a variable it sets first needs no value before
+        let lead: HashSet<String> = main_ir
+            .iter()
+            .map_while(|s| match s {
+                Ir::Assign(t, _) => match &*t.kind {
+                    ExprKind::Var(n) => Some(n.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        // the variables that are declared (in Main, or in Process when it is a method of its
+        // own): the specification's own (fields, with functions, and the outputs of a Process
+        // method are not) and the ones the structogram makes up
+        let mut declared: Vec<Var> = vec![];
+        if !fields {
+            for d in others.iter().filter(|d| !(split && d.role == Role::Out)) {
+                declared.push(Var {
+                    name: d.name.clone(),
+                    ty: self.vars[&d.name].clone(),
+                    decl: Some(d),
+                });
+            }
+        }
+        for (name, ty) in locals {
+            declared.push(Var {
                 name,
                 ty,
                 decl: None,
             });
         }
-        self.declare_and_emit(vars, &main_ir, true);
-        if !outs.is_empty() {
-            self.line("");
-            self.line(&format!("// {kw_out}: {}", names(&outs)));
-            let plan = self.io_plan(&outs, false);
-            for (k, (d, e)) in outs.iter().zip(&plan).enumerate() {
-                let closing = plan.get(k + 1).is_none_or(|n| !n.join);
-                self.print_decl(d, e.level, closing);
+        // what Process gives a value before the algorithm: an array its length (that comes
+        // from the input, so it can't be done in the declaration), an output of a Process
+        // method its first value (`out` must be assigned) unless the algorithm sets it first
+        let mut starts: Vec<Var> = vec![];
+        for d in &others {
+            let ty = self.vars[&d.name].clone();
+            let array = matches!(ty, Ty::Arr { .. });
+            let output_param = split && !fields && d.role == Role::Out;
+            let made_here = fields || output_param;
+            if made_here && (array || (output_param && !lead.contains(&d.name))) {
+                starts.push(Var {
+                    name: d.name.clone(),
+                    ty,
+                    decl: Some(d),
+                });
             }
-            if let Some(env) = &env {
-                for d in &outs {
-                    if let Some(v) = env.get(&d.name) {
-                        let w = if self.english {
-                            "Expected (test case)"
-                        } else {
-                            "Várt (teszteset)"
-                        };
-                        self.line(&format!("// {w}: {} = {v}", d.name));
-                    }
-                }
+        }
+        starts.extend(
+            declared
+                .iter()
+                .filter(|v| matches!(v.ty, Ty::Arr { .. }))
+                .map(|v| Var {
+                    name: v.name.clone(),
+                    ty: v.ty.clone(),
+                    decl: v.decl,
+                }),
+        );
+        // the names of the three methods
+        let mut used: HashSet<String> = funcs.iter().map(|f| f.1.clone()).collect();
+        used.extend(spec.funcs.keys().cloned());
+        used.extend(["Main".to_string(), "Factorial".to_string()]);
+        let mut part = |base: &str| {
+            let mut n = base.to_string();
+            while used.contains(&n) {
+                n.push('_');
+            }
+            used.insert(n.clone());
+            n
+        };
+        let (f_in, f_proc, f_out) = (part("Input"), part("Process"), part("Output"));
+
+        self.depth = 2;
+        self.line("/* Declaration */");
+        if fields {
+            self.line("// the variables of the specification are the fields of Program");
+        } else {
+            // the input is assigned by Input, the output by Process: no value yet
+            let bare: Vec<_> = ins
+                .iter()
+                .chain(outs.iter().filter(|_| split))
+                .map(|d| format!("{} {};", self.cs(&self.vars[&d.name]), id(&d.name)))
+                .collect();
+            for l in bare {
+                self.line(&l);
+            }
+        }
+        if !split {
+            for v in &declared {
+                self.declare(v);
+            }
+        }
+
+        self.line("");
+        self.line("/* Input */");
+        let in_args: Vec<String> = ins
+            .iter()
+            .filter(|_| !fields)
+            .map(|d| format!("out {}", id(&d.name)))
+            .collect();
+        if !ins.is_empty() {
+            if split {
+                self.line(&format!("{f_in}({});", in_args.join(", ")));
+            } else {
+                self.input_section(&ins, &env);
+            }
+        }
+
+        self.line("");
+        self.line("/* Process */");
+        if split {
+            let args: Vec<String> = ins
+                .iter()
+                .map(|d| id(&d.name))
+                .chain(outs.iter().map(|d| format!("out {}", id(&d.name))))
+                .collect();
+            let args = if fields { vec![] } else { args };
+            self.line(&format!("{f_proc}({});", args.join(", ")));
+        } else {
+            self.process_section(&starts, &main_ir);
+        }
+
+        self.line("");
+        self.line("/* Output */");
+        if !outs.is_empty() {
+            if split {
+                let args: Vec<String> = outs.iter().map(|d| id(&d.name)).collect();
+                let args = if fields { vec![] } else { args };
+                self.line(&format!("{f_out}({});", args.join(", ")));
+            } else {
+                self.output_section(&outs, &env);
             }
         }
         let main_text = std::mem::take(&mut self.out);
+
+        // ---- the sections as methods of their own
+        self.depth = 1;
+        if split {
+            let typed = |g: &Self, d: &crate::parser::Decl, out: bool| {
+                format!(
+                    "{}{} {}",
+                    if out { "out " } else { "" },
+                    g.cs(&g.vars[&d.name]),
+                    id(&d.name)
+                )
+            };
+            if !ins.is_empty() {
+                let params: Vec<String> = ins.iter().map(|d| typed(&self, d, true)).collect();
+                let params = if fields { vec![] } else { params };
+                self.line("");
+                self.line(&format!("static void {f_in}({})", params.join(", ")));
+                self.open();
+                self.input_section(&ins, &env);
+                self.close();
+            }
+            let params: Vec<String> = ins
+                .iter()
+                .map(|d| typed(&self, d, false))
+                .chain(outs.iter().map(|d| typed(&self, d, true)))
+                .collect();
+            let params = if fields { vec![] } else { params };
+            self.line("");
+            self.line(&format!("static void {f_proc}({})", params.join(", ")));
+            self.open();
+            for v in &declared {
+                self.declare(v);
+            }
+            if !declared.is_empty() {
+                self.line("");
+            }
+            self.process_section(&starts, &main_ir);
+            self.close();
+            if !outs.is_empty() {
+                let params: Vec<String> = outs.iter().map(|d| typed(&self, d, false)).collect();
+                let params = if fields { vec![] } else { params };
+                self.line("");
+                self.line(&format!("static void {f_out}({})", params.join(", ")));
+                self.open();
+                self.output_section(&outs, &env);
+                self.close();
+            }
+        }
+        let parts_text = std::mem::take(&mut self.out);
+        if split && !fields && self.uses_linq {
+            // a lambda can't use an `out` parameter of its method
+            let names: Vec<String> = outs.iter().map(|d| id(&d.name)).collect();
+            let clash = parts_text.lines().filter(|l| l.contains("=>")).any(|l| {
+                l.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .any(|w| names.iter().any(|n| n == w))
+            });
+            if clash {
+                self.note(format!(
+                    "{f_proc} uses an output in a lambda, which C# does not allow for an `out` parameter: turn the functions off"
+                ));
+            }
+        }
 
         // ---- functions
         self.depth = 1;
@@ -1623,12 +1773,83 @@ impl<'a> Gen<'a> {
         code.push_str("    static void Main()\n    {\n");
         code.push_str(&main_text);
         code.push_str("    }\n");
+        code.push_str(&parts_text);
         code.push_str(&methods);
         code.push_str("}\n");
         Ok(Output {
             code,
             notes: self.notes,
         })
+    }
+
+    /// The input section: every input gets its value (from the test case or the console).
+    fn input_section(&mut self, ins: &[&crate::parser::Decl], env: &Option<Env>) {
+        match env {
+            Some(env) => ins.iter().for_each(|d| self.test_decl(d, env)),
+            None => {
+                let plan = self.io_plan(ins, true);
+                let needs = ins.iter().zip(&plan).any(|(d, e)| {
+                    e.level != Level::Each && self.vars.get(&d.name).is_some_and(|t| *t != Ty::Str)
+                });
+                let sor = self.fresh("sor");
+                if needs {
+                    self.line(&format!("string[] {sor};"));
+                }
+                let mut off = 0;
+                for (d, e) in ins.iter().zip(&plan) {
+                    if !e.join {
+                        off = 0;
+                    }
+                    off = self.read_decl(d, &sor, e.level, e.join, off);
+                }
+            }
+        }
+    }
+
+    /// The process section: the variables that need a first value get it, then the algorithm.
+    fn process_section(&mut self, starts: &[Var], ir: &[Ir]) {
+        for v in starts {
+            let init = self.init_of(v);
+            self.line(&format!("{} = {init};", id(&v.name)));
+        }
+        if !starts.is_empty() {
+            self.line("");
+        }
+        self.emit(ir);
+    }
+
+    /// The output section: every output is printed, and nothing else happens.
+    fn output_section(&mut self, outs: &[&crate::parser::Decl], env: &Option<Env>) {
+        let plan = self.io_plan(outs, false);
+        for (k, (d, e)) in outs.iter().zip(&plan).enumerate() {
+            let closing = plan.get(k + 1).is_none_or(|n| !n.join);
+            self.print_decl(d, e.level, closing);
+        }
+        if let Some(env) = env {
+            for d in outs {
+                if let Some(v) = env.get(&d.name) {
+                    let w = if self.english {
+                        "Expected (test case)"
+                    } else {
+                        "Várt (teszteset)"
+                    };
+                    self.line(&format!("// {w}: {} = {v}", d.name));
+                }
+            }
+        }
+    }
+
+    /// A declaration line: a value that has a natural first one gets it; an array waits for
+    /// its length (see [`Gen::process_section`]).
+    fn declare(&mut self, v: &Var) {
+        self.vars.insert(v.name.clone(), v.ty.clone());
+        let ty = self.cs(&v.ty);
+        if matches!(v.ty, Ty::Arr { .. }) {
+            self.line(&format!("{ty} {};", id(&v.name)));
+        } else {
+            let init = self.init_of(v);
+            self.line(&format!("{ty} {} = {init};", id(&v.name)));
+        }
     }
 
     /// Size of arrays whose length depends on something computed: that of the first input array.
@@ -1880,14 +2101,6 @@ impl<'a> Gen<'a> {
 
     // ------------------------------------------------------------------ input
 
-    fn prefix(&self, ty: &Ty) -> String {
-        if self.statics {
-            String::new()
-        } else {
-            format!("{} ", self.cs(ty))
-        }
-    }
-
     fn parse(&mut self, ty: &Ty, x: &str) -> String {
         match ty {
             Ty::Int => format!("int.Parse({x})"),
@@ -1968,10 +2181,9 @@ impl<'a> Gen<'a> {
     ) -> usize {
         let ty = self.vars[&d.name].clone();
         let name = id(&d.name);
-        let pre = self.prefix(&ty);
         match &ty {
             Ty::Str => {
-                self.line(&format!("{pre}{name} = Console.ReadLine();"));
+                self.line(&format!("{name} = Console.ReadLine();"));
                 off
             }
             t if t.is_scalar() => {
@@ -1979,11 +2191,11 @@ impl<'a> Gen<'a> {
                     self.line(&format!("{sor} = {SPLIT};"));
                 }
                 let p = self.parse(t, &format!("{sor}[{off}]"));
-                self.line(&format!("{pre}{name} = {p};"));
+                self.line(&format!("{name} = {p};"));
                 off + 1
             }
             Ty::Rec(n) => {
-                self.line(&format!("{pre}{name} = new {n}();"));
+                self.line(&format!("{name} = new {n}();"));
                 if level == Level::Each {
                     self.read_fields_each(&name, n);
                     return off;
@@ -2015,9 +2227,8 @@ impl<'a> Gen<'a> {
             return;
         };
         let name = id(&d.name);
-        let pre = self.prefix(&self.vars[&d.name].clone());
         let alloc = self.alloc(&d.ty);
-        self.line(&format!("{pre}{name} = {alloc};"));
+        self.line(&format!("{name} = {alloc};"));
         if dims > 2 {
             self.note(format!(
                 "`{}` has more than two dimensions: it is not read",
@@ -2126,17 +2337,16 @@ impl<'a> Gen<'a> {
 
     fn test_decl(&mut self, d: &crate::parser::Decl, env: &Env) {
         let ty = self.vars[&d.name].clone();
-        let pre = self.prefix(&ty);
         let name = id(&d.name);
         match env.get(&d.name) {
             Some(v) => {
                 let l = self.lit(v, &ty);
-                self.line(&format!("{pre}{name} = {l};"));
+                self.line(&format!("{name} = {l};"));
             }
             None => {
                 self.note(format!("the test case has no value for `{}`", d.name));
                 let init = self.default_lit(&ty);
-                self.line(&format!("{pre}{name} = {init};"));
+                self.line(&format!("{name} = {init};"));
             }
         }
     }
@@ -2394,10 +2604,14 @@ mod tests {
         for (name, src, test) in cases() {
             let (spec, program) = build(src);
             for (mode, tag) in [(Inputs::Test, "test"), (Inputs::Console, "console")] {
-                let out =
-                    generate(&spec, &program, mode, test).unwrap_or_else(|e| panic!("{name}: {e}"));
-                std::fs::write(format!("{dir}/{name}_{tag}.cs"), &out.code).unwrap();
-                std::fs::write(format!("{dir}/{name}_{tag}.notes"), out.notes.join("\n")).unwrap();
+                for (functions, fn_tag) in [(false, ""), (true, "_fn")] {
+                    let out =
+                        generate_opts(&spec, &program, mode, test, &IoLayout::default(), functions)
+                            .unwrap_or_else(|e| panic!("{name}: {e}"));
+                    let file = format!("{dir}/{name}_{tag}{fn_tag}");
+                    std::fs::write(format!("{file}.cs"), &out.code).unwrap();
+                    std::fs::write(format!("{file}.notes"), out.notes.join("\n")).unwrap();
+                }
             }
             std::fs::write(
                 format!("{dir}/{name}_console.in"),
@@ -2425,11 +2639,17 @@ class Program
 {
     static void Main()
     {
-        // Be: n, szamok
-        int n = 5;
-        int[] szamok = new int[] { 0, 3, 72, 81, 4, 5 };
-
+        /* Declaration */
+        int n;
+        int[] szamok;
         int db = 0;
+
+        /* Input */
+        n = 5;
+        szamok = new int[] { 0, 3, 72, 81, 4, 5 };
+
+        /* Process */
+        db = 0;
         for (int i = 1; i <= n; i++)
         {
             if (szamok[i] % 2 == 1)
@@ -2438,13 +2658,185 @@ class Program
             }
         }
 
-        // Ki: db
+        /* Output */
         Console.WriteLine(\"db = \" + db);
         // Várt (teszteset): db = 3
     }
 }
 "
         );
+    }
+
+    /// The program in the four sections: the same one with the sections as methods of their own,
+    /// where the inputs and outputs travel as `out` parameters.
+    #[test]
+    fn count_with_the_sections_as_functions() {
+        let (spec, program) = build(COUNT);
+        let out = generate_opts(
+            &spec,
+            &program,
+            Inputs::Test,
+            "n: 5\nszamok: [3, 72, 81, 4, 5]\ndb: 3\n",
+            &IoLayout::default(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            out.code,
+            "using System;
+
+class Program
+{
+    static void Main()
+    {
+        /* Declaration */
+        int n;
+        int[] szamok;
+        int db;
+
+        /* Input */
+        Input(out n, out szamok);
+
+        /* Process */
+        Process(n, szamok, out db);
+
+        /* Output */
+        Output(db);
+    }
+
+    static void Input(out int n, out int[] szamok)
+    {
+        n = 5;
+        szamok = new int[] { 0, 3, 72, 81, 4, 5 };
+    }
+
+    static void Process(int n, int[] szamok, out int db)
+    {
+        db = 0;
+        for (int i = 1; i <= n; i++)
+        {
+            if (szamok[i] % 2 == 1)
+            {
+                db = db + 1;
+            }
+        }
+    }
+
+    static void Output(int db)
+    {
+        Console.WriteLine(\"db = \" + db);
+        // Várt (teszteset): db = 3
+    }
+}
+"
+        );
+    }
+
+    /// The text between two section comments of `Main`.
+    fn section<'t>(code: &'t str, name: &str) -> &'t str {
+        let marks = ["Declaration", "Input", "Process", "Output"];
+        let at = code.find(&format!("/* {name} */")).expect(name) + name.len() + 6;
+        let rest = &code[at..];
+        let end = marks
+            .iter()
+            .filter_map(|m| rest.find(&format!("/* {m} */")))
+            .chain(rest.find("\n    }\n"))
+            .min()
+            .unwrap();
+        &rest[..end]
+    }
+
+    /// Each section only does its own job, whatever the specification and the mode: the
+    /// declarations declare, the input reads (or assigns the test's values), the process works
+    /// and the output prints.
+    #[test]
+    fn the_sections_do_not_overlap() {
+        for (name, src, test) in cases() {
+            let (spec, program) = build(src);
+            for inputs in [Inputs::Test, Inputs::Console] {
+                for functions in [false, true] {
+                    let code = generate_opts(
+                        &spec,
+                        &program,
+                        inputs,
+                        test,
+                        &IoLayout::default(),
+                        functions,
+                    )
+                    .unwrap()
+                    .code;
+                    let what = format!("{name} {inputs:?} functions={functions}\n{code}");
+                    // four block comments, in this order, and no others
+                    assert_eq!(code.matches("/*").count(), 4, "{what}");
+                    let at: Vec<usize> = ["Declaration", "Input", "Process", "Output"]
+                        .iter()
+                        .map(|m| code.find(&format!("/* {m} */")).expect(&what))
+                        .collect();
+                    assert!(at.windows(2).all(|w| w[0] < w[1]), "{what}");
+                    // declaring: nothing but declarations (and the note about fields)
+                    for l in section(&code, "Declaration").lines() {
+                        let l = l.trim();
+                        assert!(
+                            l.is_empty()
+                                || l.starts_with("//")
+                                || (l.ends_with(';') && !l.contains("for")),
+                            "{l}\n{what}"
+                        );
+                        assert!(!l.contains("Console."), "{l}\n{what}");
+                    }
+                    let (input, process, output) = (
+                        section(&code, "Input"),
+                        section(&code, "Process"),
+                        section(&code, "Output"),
+                    );
+                    assert!(!input.contains("Console.Write"), "{what}");
+                    assert!(!process.contains("Console."), "{what}");
+                    assert!(
+                        !output.contains("ReadLine") && !output.contains(" = new "),
+                        "{what}"
+                    );
+                    if !functions {
+                        // the work is in `Main`, in its section
+                        assert!(!code.contains("static void Input"), "{what}");
+                        assert!(
+                            output.contains("Console.Write") || output.contains("// "),
+                            "{what}"
+                        );
+                    } else {
+                        // `Main` only calls, and declares nothing it does not pass on
+                        assert!(input.trim().starts_with("Input("), "{what}");
+                        assert!(process.trim().starts_with("Process("), "{what}");
+                        assert!(output.trim().starts_with("Output("), "{what}");
+                        for m in ["Input", "Process", "Output"] {
+                            assert_eq!(
+                                code.matches(&format!("static void {m}(")).count(),
+                                1,
+                                "{what}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A name a specification already uses is not taken by the methods.
+    #[test]
+    fn the_methods_keep_clear_of_the_specifications_functions() {
+        let src = "Be: n∈N, t∈Z[1..n]\nKi: x∈Z\nFv: Process: N->Z, Process(i)=t[i]\nEf: n>0\nUf: x=Process(n)\n";
+        let (spec, program) = build(src);
+        let code = generate_opts(
+            &spec,
+            &program,
+            Inputs::Test,
+            "n: 1\nt: [4]\nx: 4\n",
+            &IoLayout::default(),
+            true,
+        )
+        .unwrap()
+        .code;
+        assert_eq!(code.matches("static void Process_(").count(), 1, "{code}");
+        assert!(code.contains("Process_();"), "{code}");
     }
 
     /// A hand-drawn structogram with decisions that follow each other: one `if`/`else`.
@@ -2510,7 +2902,7 @@ class Program
     /// A variable that gets its value first is declared with it, unless something needs it
     /// declared earlier.
     #[test]
-    fn a_first_value_is_the_declaration() {
+    fn variables_are_declared_before_the_algorithm() {
         use crate::stuki::model::{Diagram, Kind, Node, fresh_id};
         use crate::stuki::rich::Rich;
         let stmt = |t: &str| Node {
@@ -2530,27 +2922,31 @@ class Program
             let out = generate(&spec, &p, Inputs::Test, "n: 4\nr: 4\n").unwrap();
             out.code
         };
-        // plain: declared with the value
+        // every variable is declared in the Declaration section, with a value of its own; the
+        // steps of the structogram are plain assignments in the Process section
         let c = code("i:Egész", &["i:=1", "r:=i+n"]);
-        assert!(c.contains("int i = 1;") && !c.contains("int i = 0;"), "{c}");
-        assert!(c.contains("int r = i + n;"), "{c}");
-        // reads itself: starts with a value of its own, then the step
-        let c = code("i:Egész", &["i:=i+1", "r:=i"]);
-        assert!(c.contains("int i = 0;") && c.contains("i = i + 1;"), "{c}");
-        // reads a variable that gets its value later: that one is declared first
-        let c = code("a:Egész, b:Egész", &["a:=b+1", "b:=2", "r:=a+b"]);
-        let (b0, a1) = (
-            c.find("int b = 0;").expect(&c),
-            c.find("int a = b + 1;").expect(&c),
-        );
+        let (declared, process) = (section(&c, "Declaration"), section(&c, "Process"));
         assert!(
-            b0 < a1 && c.contains("b = 2;") && !c.contains("int b = 2;"),
+            declared.contains("int i = 0;") && declared.contains("int r = 0;"),
             "{c}"
         );
-        // every step the routine starts with
-        let c = code("i:Egész", &["r:=n", "i:=1"]);
-        assert!(c.contains("int r = n;") && c.contains("int i = 1;"), "{c}");
-        // but only those: after a decision a variable is declared first, as before
+        assert!(
+            process.contains("i = 1;") && process.contains("r = i + n;"),
+            "{c}"
+        );
+        assert!(!process.contains("int "), "{c}");
+        // a variable that gets its value later is no problem for the order
+        let c = code("a:Egész, b:Egész", &["a:=b+1", "b:=2", "r:=a+b"]);
+        let (declared, process) = (section(&c, "Declaration"), section(&c, "Process"));
+        assert!(
+            declared.contains("int a = 0;") && declared.contains("int b = 0;"),
+            "{c}"
+        );
+        assert!(
+            process.find("a = b + 1;").expect(&c) < process.find("b = 2;").expect(&c),
+            "{c}"
+        );
+        // a decision does not change that
         let mut d = Diagram::new();
         d.variables = Rich::plain("i:Egész");
         d.body = vec![
@@ -2574,7 +2970,8 @@ class Program
             .unwrap()
             .code;
         assert!(
-            c.contains("int r = n;") && c.contains("int i = 0;") && c.contains("i = 1;"),
+            section(&c, "Declaration").contains("int i = 0;")
+                && section(&c, "Process").contains("i = 1;"),
             "{c}"
         );
     }
@@ -2683,7 +3080,7 @@ class Program
             "{each}"
         );
         let joined = code(&layout_of(&[("m", Level::Auto, true)]));
-        assert!(joined.contains("int m = int.Parse(sor[1]);"), "{joined}");
+        assert!(joined.contains("m = int.Parse(sor[1]);"), "{joined}");
         assert_eq!(joined.matches("Console.ReadLine()").count(), 2, "{joined}");
     }
 }

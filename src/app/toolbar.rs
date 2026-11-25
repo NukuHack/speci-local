@@ -6,7 +6,7 @@ use crate::editor::cursor_of;
 use crate::platform;
 use crate::ui::{
     self, ACCENT, GREEN, I_COPY, I_DATA, I_FAIL, I_GEAR, I_NEW, I_OK, I_OPEN, I_PASTE, I_SAVE,
-    I_SPEC, I_STUKI, I_VIEW, I_WARN, RED,
+    I_SPEC, I_STUKI, I_VIEW, I_WAND, I_WARN, RED,
 };
 use eframe::egui::{self, RichText, TextEdit, TextStyle};
 
@@ -263,6 +263,15 @@ impl App {
         let narrow = self.narrow;
         ui.horizontal_wrapped(|ui| {
             self.vim_toggle(ui);
+            if ui
+                .button(format!("{I_WAND}  Reduction"))
+                .on_hover_text(
+                    "Write the reduction table (visszavezetési táblázat) under the specification:\nfor every theorem (SZUMMA, DARAB, KERES, …) its template and what each part of it is here.\nPress again to update it.",
+                )
+                .clicked()
+            {
+                self.spec_reduction(ui.ctx());
+            }
             if narrow {
                 return; // phones switch panes with the tabs below
             }

@@ -17,10 +17,16 @@
 //! ---*/
 //!
 //! /*--- code ---
+//! // speci-local: {"source":"Console","functions":true,"layout":{...}}
 //! using System;
 //! ...
 //! ---*/
 //! ```
+//!
+//! The first line of the code block holds the settings of the Code tab (where the program gets
+//! its input, how it breaks its lines, whether the sections are functions) as one line of JSON,
+//! so that opening the project sets them as they were. It is a C# comment: the block still is
+//! the program.
 
 use crate::compact;
 use crate::stuki::{format as stuki_format, model::Program};
@@ -41,6 +47,9 @@ pub struct Project {
     pub stuki: Option<Program>,
     /// The C# program of the Code tab; `None`: the file has none.
     pub code: Option<String>,
+    /// The settings of the Code tab, as the one line of JSON the file has them in (the app
+    /// reads and writes them); `None`: the file has none, so the defaults apply.
+    pub code_settings: Option<String>,
 }
 
 const TITLE: &str = "// title: ";
@@ -48,6 +57,8 @@ const OPEN: &str = "/*--- test ---\n";
 const STUKI_OPEN: &str = "/*--- stuki ---\n";
 const CODE_OPEN: &str = "/*--- code ---\n";
 const CLOSE: &str = "---*/";
+/// What the first line of the code block starts with when it holds the Code tab's settings.
+const SETTINGS: &str = "// speci-local: ";
 
 pub fn to_sp(doc: &Doc) -> String {
     let mut out = String::new();
@@ -68,16 +79,28 @@ pub fn to_sp(doc: &Doc) -> String {
 /// starts with) and an empty program are left out, so a project without them is a plain
 /// `.sp` file.
 pub fn to_project(doc: &Doc, stuki: &Program, code: &str) -> String {
+    to_project_with(doc, stuki, code, None)
+}
+
+/// [`to_project`] with the settings of the Code tab (one line of JSON). They are saved even
+/// when there is no program yet.
+pub fn to_project_with(doc: &Doc, stuki: &Program, code: &str, settings: Option<&str>) -> String {
     let mut out = to_sp(doc);
     if !stuki.content_is(&Program::default().content()) {
         // `*` only occurs inside JSON strings, where `\/` is the same as `/`
         let json = stuki_format::to_st(stuki).replace("*/", "*\\/");
         out.push_str(&format!("\n{STUKI_OPEN}{}\n{CLOSE}\n", json.trim_end()));
     }
-    if !code.trim().is_empty() {
+    let settings = settings.map(|s| s.replace(['\r', '\n'], " "));
+    if !code.trim().is_empty() || settings.is_some() {
+        let mut body = String::new();
+        if let Some(s) = &settings {
+            body.push_str(&format!("{SETTINGS}{s}\n"));
+        }
+        body.push_str(code.trim_end());
         out.push_str(&format!(
             "\n{CODE_OPEN}{}\n{CLOSE}\n",
-            escape_code(code.trim_end())
+            escape_code(body.trim_end())
         ));
     }
     out
@@ -133,7 +156,7 @@ fn unescape_code(text: &str) -> String {
 /// Read a `.sp` file. A damaged Stuki block is an error; the specification and test cases are
 /// still in [`from_sp`].
 pub fn from_project(text: &str) -> Result<Project, String> {
-    let (doc, stuki, code) = split(text);
+    let (doc, stuki, code, code_settings) = split(text);
     let stuki = match stuki {
         Some(json) => Some(
             stuki_format::from_st(&json)
@@ -141,7 +164,12 @@ pub fn from_project(text: &str) -> Result<Project, String> {
         ),
         None => None,
     };
-    Ok(Project { doc, stuki, code })
+    Ok(Project {
+        doc,
+        stuki,
+        code,
+        code_settings,
+    })
 }
 
 /// The C# program of a `.sp` file, if it has one.
@@ -149,13 +177,19 @@ pub fn code_of(text: &str) -> Option<String> {
     split(text).2
 }
 
+/// The settings of the Code tab of a `.sp` file (one line of JSON), if it has them.
+pub fn code_settings_of(text: &str) -> Option<String> {
+    split(text).3
+}
+
 /// The specification and test cases of a `.sp` file (its structograms left out).
 pub fn from_sp(text: &str) -> Doc {
     split(text).0
 }
 
-/// The specification and test cases, the Stuki block's JSON and the C# program.
-fn split(text: &str) -> (Doc, Option<String>, Option<String>) {
+/// The specification and test cases, the Stuki block's JSON, the C# program and the settings
+/// of the Code tab.
+fn split(text: &str) -> (Doc, Option<String>, Option<String>, Option<String>) {
     // Windows editors may add a byte-order mark and CRLF line endings
     let text = text.trim_start_matches('\u{feff}').replace("\r\n", "\n");
     let mut rest = text.as_str();
@@ -169,6 +203,7 @@ fn split(text: &str) -> (Doc, Option<String>, Option<String>) {
     let mut tests = Vec::new();
     let mut stuki = None;
     let mut code = None;
+    let mut settings = None;
     // the next test, Stuki or code block, whichever comes first
     let next = |rest: &str| {
         [OPEN, STUKI_OPEN, CODE_OPEN]
@@ -184,7 +219,14 @@ fn split(text: &str) -> (Doc, Option<String>, Option<String>) {
         if open == OPEN {
             tests.push(format!("{body}\n"));
         } else if open == CODE_OPEN {
-            code = Some(format!("{}\n", unescape_code(body)));
+            let body = unescape_code(body);
+            let (first, program) = body.split_once('\n').unwrap_or((body.as_str(), ""));
+            if let Some(json) = first.strip_prefix(SETTINGS) {
+                settings = Some(json.trim().to_string());
+                code = (!program.trim().is_empty()).then(|| format!("{}\n", program.trim_end()));
+            } else {
+                code = Some(format!("{body}\n"));
+            }
         } else {
             stuki = Some(body.to_string());
         }
@@ -199,7 +241,7 @@ fn split(text: &str) -> (Doc, Option<String>, Option<String>) {
         spec: format!("{}\n", spec.trim_end()),
         tests,
     };
-    (doc, stuki, code)
+    (doc, stuki, code, settings)
 }
 
 // ---------------------------------------------------------------- clipboard
@@ -242,8 +284,7 @@ pub fn from_clipboard(text: &str) -> Result<Project, String> {
         if let Some(json) = compact::web_link_json(t) {
             return from_web_json(&json?).map(|doc| Project {
                 doc,
-                stuki: None,
-                code: None,
+                ..Project::default()
             });
         }
         if t.contains("uuid=") {

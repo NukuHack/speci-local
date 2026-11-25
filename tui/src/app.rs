@@ -633,6 +633,7 @@ impl App {
                                 doc,
                                 stuki: None,
                                 code,
+                                code_settings: None,
                             },
                             Some(e),
                         )

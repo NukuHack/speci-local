@@ -46,7 +46,7 @@ enum Replace {
     New,
     Open,
     Load(PathBuf),
-    Import(crate::file::Project),
+    Import(Box<crate::file::Project>),
 }
 
 /// The pane shown on narrow (phone) screens, where only one fits.

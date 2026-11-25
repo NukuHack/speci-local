@@ -20,6 +20,7 @@ pub mod ioplan;
 pub mod parser;
 #[cfg(feature = "gui")]
 pub mod platform;
+pub mod reduction;
 mod runner;
 pub mod stuki;
 #[cfg(feature = "gui")]

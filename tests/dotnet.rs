@@ -52,6 +52,41 @@ fn console_program_matches_the_test_case() {
     assert!(!csharp::same_output(&expected, &f.output), "{}", f.output);
 }
 
+/// With Input, Process and Output as functions the program does the same, in both modes.
+#[test]
+fn program_with_functions_runs_the_same() {
+    let Some(_guard) = serial() else { return };
+    let spec = speci_local::parse(SPEC).expect("the specification parses");
+    let expected = csharp::console_output(&spec, TEST).expect("expected output");
+    for inputs in [Inputs::Test, Inputs::Console] {
+        let c = match csharp::convert_opts(
+            SPEC,
+            "odd numbers",
+            &Program::default(),
+            TEST,
+            inputs,
+            &speci_local::ioplan::IoLayout::default(),
+            true,
+        ) {
+            Ok(c) => c,
+            Err(csharp::ConvertError::Spec(e) | csharp::ConvertError::Test(e)) => panic!("{e}"),
+        };
+        assert!(c.code.contains("static void Process("), "{}", c.code);
+        let f = run(&c.code, &c.stdin.clone().unwrap_or_default());
+        assert!(
+            f.build.is_empty() || !f.build.contains("error"),
+            "{}\n{}",
+            f.build,
+            c.code
+        );
+        if inputs == Inputs::Console {
+            assert!(csharp::same_output(&expected, &f.output), "{}", f.output);
+        } else {
+            assert_eq!(f.output.trim(), "db = 3", "{}", f.output);
+        }
+    }
+}
+
 /// A compile error is reported with the lines it points to.
 #[test]
 fn compile_error_names_its_line() {
