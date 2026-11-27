@@ -14,6 +14,7 @@ Space o / n  ·  open / new
 Space q  ·  quit (asks about unsaved changes)
 Space y  ·  copy the whole project as one line
 Space p  ·  paste a project line (or paste with the terminal)
+Space u  ·  the link and conversion menu (see "Links and conversions")
 Space T  ·  light / dark colors
 Space A  ·  ASCII mode on / off (:set ascii | :set utf8, or start with --ascii)
 Space 1 / 2 / 3  ·  Specification / Structogram / Code
@@ -23,7 +24,25 @@ Space z  ·  zoom
 :w [file]  :wq  :q  :q!  :e file  :new  :saveas file
 :set light|dark  :set ascii|utf8  :zoom  :help  :spec  :stuki  :code
 :copy  :paste  :N  ·  go to line N
+:url  :tourl  :toline  :decode  :csurl  :csline  :weblink  :openweb  ·  links, see below
 Up/Down  ·  command history
+
+# Links and conversions (Space u) @links
+The ELTE web editors (progalap.elte.hu) share projects as links with data=... in them; this
+program shares them as SPECI1: / STUKI1: lines. The input comes from the clipboard (or from the
+command's argument), the result is copied. Wrapped lines are fine.
+Space u, then:
+  a  ·  guess: a line becomes a link, a link becomes a line     (:url [text])
+  l  ·  line / specification text / .st JSON  ->  web editor link   (:tourl [text])
+  u  ·  web editor link  ->  SPECI1: / STUKI1: line                 (:toline [link])
+  d  ·  web editor link  ->  the specification text or the structogram JSON
+        (:decode [link] [file]  also writes it to a file)
+  c  ·  C# program  ->  Stuki link, with one structogram per method  (:csurl)
+  C  ·  C# program  ->  STUKI1: line                                 (:csline)
+  w  ·  copy the web editor link of this tool's project  (:weblink; in the Code tool the
+        program as structograms)
+  o  ·  open it in the browser                           (:openweb)
+Pasting a link or a line outside insert mode (Space p) imports it into the editors.
 
 # Specification → structogram @spec
 Space f  ·  build structograms from the current specification (works from both tools)
@@ -51,6 +70,9 @@ Space f  ·  write the program from the specification and the structograms (asks
 Space m  ·  the program uses the test case's values  /  reads them from the console
 Space F  ·  Input, Process and Output as functions of their own (:functions [on|off])
 Space r (F5)  ·  build and run it with dotnet from the PATH;  Space x stops it
+Space s  ·  C# -> structograms: every method of the program becomes a structogram and the
+            Structogram tool opens (replaces its content; :fromcode or :tostuki too)
+Space u  ·  links: C# -> Stuki link / STUKI1: line (c / C), web link, decode ...
 Space i  ·  console mode: fill the input box from the test case
 Space y or c  ·  copy the program;  Space b / B  ·  copy / open a carbon.now.sh link
 ]t / [t  ·  test case the program is made for;  ]e / [e  ·  next compiler error
@@ -58,6 +80,7 @@ Tab / Shift-Tab  ·  program, console input (console mode only), output
 Output pane: j k Ctrl-d Ctrl-u gg G scroll,  Enter jumps to the first compile error
 Console mode while the program runs: Enter on a line of the input box sends it (:send text too)
 :convert  :mode test|console  :functions  :run  :stop  :fill  :carbon [open]  :send text  :notes
+:fromcode  :csurl  :csline  :weblink  :openweb
 :notes  ·  what the conversion could not translate (the // TODO lines) or guessed
 Under the input box the test case's expected output is shown, and after a run
 the output is compared with it (matches / differs).

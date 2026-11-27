@@ -2,6 +2,7 @@
 
 use super::theme::theme_buttons;
 use super::{App, Tab, Tool, data_editor_id, line_col, spec_editor_id};
+use crate::convert;
 use crate::editor::cursor_of;
 use crate::platform;
 use crate::ui::{
@@ -129,6 +130,41 @@ impl App {
                 self.copy_web_link(ui.ctx());
                 ui.close();
             }
+            ui.separator();
+            ui.menu_button("Convert links…", |ui| {
+                ui.set_min_width(240.0);
+                for (op, hint) in [
+                    (
+                        convert::Op::Auto,
+                        "Turn a SPECI1:/STUKI1: line into a link, or a link into a line",
+                    ),
+                    (
+                        convert::Op::ToUrl,
+                        "A line, specification text or .st JSON → progalap.elte.hu link",
+                    ),
+                    (
+                        convert::Op::ToLine,
+                        "A progalap.elte.hu link → SPECI1:/STUKI1: line",
+                    ),
+                    (
+                        convert::Op::Decode,
+                        "A link → the specification text, or the structogram JSON",
+                    ),
+                    (
+                        convert::Op::CsToUrl,
+                        "The C# program (Code tab) → Stuki link",
+                    ),
+                    (
+                        convert::Op::CsToLine,
+                        "The C# program (Code tab) → STUKI1: line",
+                    ),
+                ] {
+                    if ui.button(op.label()).on_hover_text(hint).clicked() {
+                        self.open_convert(op);
+                        ui.close();
+                    }
+                }
+            });
             ui.separator();
             ui.label("Font size");
             ui.add(egui::Slider::new(&mut self.font, 12.0..=28.0).suffix(" px"));

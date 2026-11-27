@@ -2,6 +2,8 @@
 
 use crate::ascii;
 mod code_tool;
+mod convert_tool;
+pub use convert_tool::MENU as CONVERT_MENU;
 
 use crate::clip;
 use crate::code::{Code, CodePane, Source};
@@ -13,6 +15,7 @@ use crate::stuki::{Req as StReq, Stuki};
 use crate::theme::Theme;
 use crate::vim::Vim;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use speci_local::convert::Op;
 use speci_local::diag::{Diagnostic, Pane as DiagPane};
 use speci_local::eval::Trace;
 use speci_local::file::{
@@ -89,6 +92,8 @@ pub enum Overlay {
     Confirm(Pending),
     Line(LineKind, Input),
     Paste,
+    /// The `Space u` conversions: `None` the menu, `Some(op)` waiting for a pasted input.
+    Convert(Option<Op>),
 }
 
 struct EvalResult {
@@ -1129,6 +1134,16 @@ impl App {
             "copy" | "yank" => self.copy_project(),
             "paste" => self.paste_project(),
             "fromspec" => self.build_from_spec(),
+            "fromcode" | "tostuki" | "cs2st" => self.code_to_stuki(),
+            "url" | "convert-link" => self.convert_run(Op::Auto, arg),
+            "tourl" | "link" => self.convert_run(Op::ToUrl, arg),
+            "toline" | "line" => self.convert_run(Op::ToLine, arg),
+            "decode" | "dec" => self.convert_run(Op::Decode, arg),
+            "csurl" => self.convert_run(Op::CsToUrl, arg),
+            "csline" => self.convert_run(Op::CsToLine, arg),
+            "weblink" | "wl" => self.web_link(false),
+            "openweb" | "web" => self.web_link(true),
+            "convmenu" => self.overlay = Overlay::Convert(None),
             "export" | "picture" => self.export_text(Some(arg).filter(|a| !a.is_empty())),
             "help" | "h" | "?" => self.overlay = Overlay::Help(0),
             "view" => {
@@ -1196,6 +1211,12 @@ impl App {
             Overlay::Paste => {
                 self.overlay = Overlay::None;
                 self.import_text(text);
+                return;
+            }
+            Overlay::Convert(Some(op)) => {
+                let op = *op;
+                self.overlay = Overlay::None;
+                self.convert_text(op, text, None);
                 return;
             }
             Overlay::Line(_, i) => return i.insert_str(text),
@@ -1298,9 +1319,9 @@ impl App {
                 KeyCode::Char(' ') => {
                     self.leader = true;
                     self.say(match self.tool {
-                        Tool::Spec => "SPC: r run  f →structogram  t/d test  s scaffold  a auto  v view  w save  o open  n new  y copy  p paste  q quit  ? help",
-                        Tool::Stuki => "SPC: f build from spec  c copy picture  w save  o open  n new  y copy  p paste  1/2/3 tool  q quit  ? help",
-                        Tool::Code => "SPC: f from spec+stuki  m mode  r run  x stop  i fill input  b/B carbon  y copy  w save  1/2/3 tool  q quit  ? help",
+                        Tool::Spec => "SPC: r run  f →structogram  t/d test  s scaffold  a auto  v view  u links  w save  o open  n new  y copy  p paste  q quit  ? help",
+                        Tool::Stuki => "SPC: f build from spec  c copy picture  u links  w save  o open  n new  y copy  p paste  1/2/3 tool  q quit  ? help",
+                        Tool::Code => "SPC: f from spec+stuki  m mode  r run  x stop  i fill input  s →structogram  u links  b/B carbon  y copy  w save  1/2/3 tool  q quit  ? help",
                     });
                     return;
                 }
@@ -1445,6 +1466,8 @@ impl App {
             '1' => self.tool = Tool::Spec,
             '2' => self.tool = Tool::Stuki,
             '3' => self.tool = Tool::Code,
+            's' if self.tool == Tool::Code => self.code_to_stuki(),
+            'u' => self.overlay = Overlay::Convert(None),
             'f' if self.tool == Tool::Code => self.code_convert(),
             'f' => self.build_from_spec(),
             'c' if self.tool == Tool::Code => self.copy_project(),
@@ -1608,6 +1631,16 @@ impl App {
             Overlay::Paste => {
                 if !matches!(k.code, KeyCode::Esc | KeyCode::Char('q')) {
                     self.overlay = Overlay::Paste;
+                }
+            }
+            Overlay::Convert(None) => {
+                if !matches!(k.code, KeyCode::Esc | KeyCode::Char('q')) {
+                    self.convert_menu_key(k);
+                }
+            }
+            Overlay::Convert(Some(op)) => {
+                if !matches!(k.code, KeyCode::Esc | KeyCode::Char('q')) {
+                    self.overlay = Overlay::Convert(Some(op));
                 }
             }
             Overlay::Confirm(Pending::Convert) => {

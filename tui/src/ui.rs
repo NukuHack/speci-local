@@ -1067,6 +1067,7 @@ fn draw_stuki_side(f: &mut Frame<'_>, app: &App, area: Rect) {
         "u / Ctrl-r undo / redo",
         "<Space>f build from spec",
         "<Space>c copy picture as text",
+        "<Space>u links / conversions",
     ] {
         lines.push(Line::from(Span::styled(t, th.dim())));
     }
@@ -1247,6 +1248,45 @@ fn draw_overlay(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             f.render_widget(blk, r);
             let t = "No system clipboard tool was found.\n\nPaste the copied project line now with your\nterminal's paste shortcut (Ctrl+Shift+V,\nCmd+V or right click).";
             f.render_widget(Paragraph::new(t).style(th.text()), inner);
+        }
+        Overlay::Convert(op) => {
+            let waiting = *op;
+            let r = centered(area, 86, if waiting.is_some() { 7 } else { 13 });
+            f.render_widget(Clear, r);
+            let blk = pane_block("Convert links", "Esc closes", true, &th);
+            let inner = blk.inner(r);
+            f.render_widget(blk, r);
+            let menu = || {
+                let key = |c: char, what: &str| {
+                    Line::from(vec![
+                        Span::styled(format!(" {c} "), th.selected()),
+                        Span::styled(format!(" {what}"), th.text()),
+                    ])
+                };
+                let mut v: Vec<Line<'_>> = crate::app::CONVERT_MENU
+                    .iter()
+                    .map(|(c, _, what)| key(*c, what))
+                    .collect();
+                v.push(key('w', "copy the web editor link of this tool's project"));
+                v.push(key('o', "open it in the browser"));
+                v.push(Line::default());
+                v.push(Line::from(Span::styled(
+                    "The input comes from the clipboard (the C# ones use the program); the result is copied.",
+                    th.text(),
+                )));
+                v
+            };
+            let lines: Vec<Line<'_>> = waiting.map_or_else(menu, |op| {
+                vec![
+                    Line::from(Span::styled(op.label(), th.text())),
+                    Line::default(),
+                    Line::from(Span::styled(
+                        "No clipboard tool was found: paste the input now with your terminal's paste shortcut.",
+                        th.text(),
+                    )),
+                ]
+            });
+            f.render_widget(Paragraph::new(lines), inner);
         }
         Overlay::Confirm(crate::app::Pending::Convert) => {
             let r = centered(area, 66, 7);

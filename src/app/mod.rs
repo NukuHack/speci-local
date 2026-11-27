@@ -144,6 +144,9 @@ struct App {
     /// Fallback when the system clipboard can't be read: the user pastes here.
     #[serde(skip)]
     paste_box: Option<String>,
+    /// The “Convert links” dialog of the settings menu.
+    #[serde(skip)]
+    convert_box: Option<dialogs::ConvertBox>,
     #[serde(skip)]
     results: Vec<Option<Outcome>>,
     #[serde(skip)]
@@ -205,6 +208,7 @@ impl Default for App {
             step: 0,
             traced_test: 0,
             paste_box: None,
+            convert_box: None,
             results: vec![],
             job: None,
             confirm: None,

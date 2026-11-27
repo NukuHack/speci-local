@@ -932,3 +932,103 @@ fn reduction_table_is_written_under_the_specification() {
     assert!(a.status.contains("nothing to reduce"), "{}", a.status);
     assert!(!a.spec_ed.text().contains("Visszavezetés"));
 }
+
+// ------------------------------------------------------------------ links and conversions
+
+#[test]
+fn the_code_tool_turns_its_program_into_structograms() {
+    // the program the tool writes from the specification converts back
+    let mut a = code_app();
+    keys(&mut a, "<Space>s");
+    assert_eq!(a.tool, Tool::Stuki);
+    assert!(!a.stuki.program.diagrams.is_empty());
+    assert!(
+        a.status.contains("Structograms built from the C# program"),
+        "{}",
+        a.status
+    );
+    // and a hand-written one, with two methods
+    let mut a = code_app();
+    a.code.reset(
+        Some(speci_local::stuki::from_csharp::DEMO_SOURCE.to_string()),
+        None,
+    );
+    keys(&mut a, ":fromcode<CR>");
+    assert_eq!(a.tool, Tool::Stuki);
+    assert_eq!(a.stuki.program.diagrams.len(), 2);
+    assert!(a.status.contains("Main, Fibonacci"), "{}", a.status);
+    // a program without a method says why
+    let mut a = code_app();
+    a.code.reset(Some("class A { int x; }".into()), None);
+    keys(&mut a, "<Space>s");
+    assert_eq!(a.tool, Tool::Code);
+    assert!(a.status.contains("Can't make structograms"), "{}", a.status);
+}
+
+#[test]
+fn the_conversion_commands_work_without_a_clipboard() {
+    let mut a = code_app();
+    a.code.reset(
+        Some(speci_local::stuki::from_csharp::DEMO_SOURCE.to_string()),
+        None,
+    );
+    keys(&mut a, ":csurl<CR>");
+    assert!(
+        a.status.contains("2 method(s): Main, Fibonacci"),
+        "{}",
+        a.status
+    );
+    keys(&mut a, ":csline<CR>");
+    assert!(a.status.contains("copied"), "{}", a.status);
+    // a link given as an argument: to a line, to the content (also into a file)
+    let url = speci_local::convert::run(
+        speci_local::convert::Op::CsToUrl,
+        speci_local::stuki::from_csharp::DEMO_SOURCE,
+    )
+    .unwrap()
+    .text;
+    a.command(&format!("toline {url}"));
+    assert!(a.status.contains("2 structogram(s)"), "{}", a.status);
+    let out = std::env::temp_dir().join("speci_tui_decode_test.json");
+    let _ = std::fs::remove_file(&out);
+    a.command(&format!("decode {url} {}", out.display()));
+    assert!(
+        std::fs::read_to_string(&out)
+            .unwrap()
+            .contains("\"Fibonacci\"")
+    );
+    let _ = std::fs::remove_file(&out);
+    a.command("tourl hello world");
+    assert_ne!(a.status, "");
+    a.command("weblink");
+    assert!(a.status.contains("web editor link"), "{}", a.status);
+}
+
+#[test]
+fn the_conversion_menu_is_documented_on_screen() {
+    let mut a = fresh();
+    keys(&mut a, "<Space>u");
+    let s = render(&mut a, 150, 40);
+    for want in ["Convert links", "web editor link", "C# program", "STUKI1"] {
+        assert!(s.contains(want), "{want}\n{s}");
+    }
+    keys(&mut a, "<Esc>");
+    assert!(!render(&mut a, 150, 40).contains("Convert links"));
+    // the help lists the keys and the commands
+    let lines: Vec<String> = ui::help_lines(&a.theme, a.tool, a.focus)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let all = lines.join("\n");
+    for want in ["Space u", ":decode", ":csurl", ":weblink", ":fromcode"] {
+        assert!(all.contains(want), "help lacks {want}");
+    }
+    // ASCII mode keeps the menu 7-bit
+    keys(&mut a, "<Space>A<Space>u");
+    let s = render(&mut a, 150, 40);
+    assert!(
+        s.is_ascii(),
+        "{}",
+        s.chars().find(|c| !c.is_ascii()).unwrap()
+    );
+}

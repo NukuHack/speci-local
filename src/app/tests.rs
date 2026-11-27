@@ -718,6 +718,50 @@ fn code_tab_writes_the_program_from_the_spec() {
     h.state_mut().code.output.clear();
 }
 
+/// The Code tab's "To structogram" button turns the program into structograms on the Stuki tab.
+#[test]
+fn code_tab_turns_the_program_into_structograms() {
+    let mut h = code_harness();
+    h.state_mut().code.text = crate::stuki::from_csharp::DEMO_SOURCE.to_string();
+    h.run_steps(2);
+    h.get_by_label_contains("To structogram").click();
+    h.run_steps(4);
+    assert!(h.state().tool == Tool::Stuki);
+    assert_eq!(h.state().stuki.program.diagrams.len(), 2);
+    // a program without a method says why and stays on the Code tab
+    let mut h = code_harness();
+    h.state_mut().code.text = "class A { int x; }".into();
+    h.state_mut().code_to_stuki();
+    assert!(h.state().tool == Tool::Code);
+    assert!(h.state().code.status.contains("Can't make structograms"));
+}
+
+/// The settings menu's converter turns a link into a line and back.
+#[test]
+fn convert_dialog_converts_links() {
+    let mut h = code_harness();
+    h.state_mut().code.text = crate::stuki::from_csharp::DEMO_SOURCE.to_string();
+    h.state_mut().open_convert(crate::convert::Op::CsToUrl);
+    h.run_steps(3);
+    let b = h
+        .state_mut()
+        .convert_box
+        .as_mut()
+        .expect("the dialog is open");
+    assert!(b.input.contains("Fibonacci"));
+    let url = match b.result() {
+        Some(Ok(c)) => c.text.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert!(url.starts_with(crate::compact::STUKI_EDITOR));
+    b.op = crate::convert::Op::Auto;
+    b.input = url;
+    match b.result() {
+        Some(Ok(c)) => assert!(c.text.starts_with("STUKI1:")),
+        other => panic!("{other:?}"),
+    }
+}
+
 /// The side panel of the Code tab (console mode): the line breaks of the input are a choice per
 /// variable, and the program and its input follow.
 #[test]
@@ -894,8 +938,19 @@ fn reduction_button_writes_the_table_under_the_spec() {
     assert_eq!(h.state().doc.spec, spec);
     assert_eq!(spec.matches("Visszavezetés").count(), 1);
 
-    h.state_mut().doc.spec = "Be: n∈N\nKi: m∈N\nEf: -\nUf: m=n+1\n".into();
-    h.run_steps(6); // evaluated; its status is not what is asked about
+    let other = "Be: n∈N\nKi: m∈N\nEf: -\nUf: m=n+1\n";
+    h.state_mut().doc.spec = other.into();
+    // wait for its evaluation (a slow machine needs longer than a few frames): it sets a status
+    // of its own, which must not land after the click below
+    for _ in 0..1000 {
+        h.step();
+        let app = h.state();
+        if app.job.is_none() && app.evaluated.as_ref().is_some_and(|e| e.spec == other) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    h.run_steps(2);
     h.get_by_label(&format!("{I_WAND}  Reduction")).click();
     h.run_steps(3);
     assert!(

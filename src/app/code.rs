@@ -2,15 +2,15 @@
 //! and the structograms; Run builds and runs it with the `dotnet` on the PATH (Linux, Windows,
 //! macOS: whatever finds `dotnet`).
 
-use super::App;
 use super::theme::{card, pane_title};
+use super::{App, Tool};
 use crate::csharp::{self, Inputs};
 use crate::dotnet;
 use crate::editor::{Lang, code_editor, cursor_of};
 use crate::file::CodeCfg;
 use crate::ioplan::{self, IoLayout, Kind as IoKind, Level};
 use crate::platform;
-use crate::ui::{ACCENT, GREEN, I_CLOSE, I_OK, I_RUN, I_WAND, I_WARN, RED};
+use crate::ui::{ACCENT, GREEN, I_CLOSE, I_OK, I_RUN, I_STUKI, I_WAND, I_WARN, RED};
 use eframe::egui::{self, Id, Margin, RichText};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -159,6 +159,7 @@ impl App {
     /// The action bar of the Code tab.
     pub(super) fn code_menu(&mut self, ui: &mut egui::Ui) {
         let mut convert = false;
+        let mut to_stuki = false;
         let mut functions_changed = false;
         ui.horizontal_wrapped(|ui| {
             self.vim_toggle(ui);
@@ -171,6 +172,18 @@ impl App {
                 .clicked()
             {
                 convert = true;
+            }
+            if ui
+                .add_enabled(
+                    !self.code.text.trim().is_empty(),
+                    egui::Button::new(format!("{I_STUKI}  To structogram")),
+                )
+                .on_hover_text(
+                    "Turn the C# program's methods into structograms on the Stuki tab\n(replaces the current ones; Ctrl+Z there undoes it)",
+                )
+                .clicked()
+            {
+                to_stuki = true;
             }
             ui.separator();
             ui.selectable_value(&mut self.code.source, Source::Test, "Test values")
@@ -236,12 +249,31 @@ impl App {
         if functions_changed {
             self.code_lines_changed();
         }
+        if to_stuki {
+            self.code_to_stuki();
+        }
         if convert {
             if !self.code.text.is_empty() && self.code.text != self.code.generated {
                 self.code.confirm = true;
             } else {
                 self.code_convert();
             }
+        }
+    }
+
+    /// The C# program's methods become structograms (the Stuki tab's ones are replaced; Ctrl+Z
+    /// there undoes it).
+    pub(super) fn code_to_stuki(&mut self) {
+        match crate::stuki::from_csharp::from_csharp(&self.code.text) {
+            Ok(c) => {
+                let msg = format!(
+                    "Structograms built from the C# program ({}); Ctrl+Z undoes",
+                    c.methods.join(", ")
+                );
+                self.stuki.replace(c.program, msg);
+                self.tool = Tool::Stuki;
+            }
+            Err(e) => self.code.status = format!("Can't make structograms from the program: {e}"),
         }
     }
 

@@ -44,6 +44,8 @@ The mouse is never needed (and never captured, so you can still select text with
 | `Space w` (`Ctrl-s`), `W` | save, save as |
 | `Space o` `n` `q` | open, new, quit |
 | `Space y` / `p` | copy / paste the whole project as one line |
+| `Space u` | **links and conversions menu** (see below; `:url :tourl :toline :decode :csurl :csline :weblink :openweb`) |
+| `Space s` (Code tool, `:fromcode`) | **convert the C# program into structograms** |
 | `Space t` `d` `s` | new test case, delete test case, insert variable names |
 | `Space f` (`:fromspec`) | **convert the specification into structograms** (in the Code tool: into a C# program) |
 | `Space m` `r` `x` `i` `b` | Code tool: mode test/console, run, stop, fill input, carbon link |
@@ -81,6 +83,30 @@ step list. `v` cycles the views.
 delete/copy/paste, `J`/`K` move an element, `+c`/`+d` add a case / default, `th` `tv` `tr` show or
 hide the name, variables and return value, `u`/`Ctrl-r` undo and redo. The test cases run in the
 background; the failing element is marked red and the side panel says why.
+
+## Links and conversions
+
+The ELTE web editors (progalap.elte.hu) share projects as links with `?data=` in them; this
+program shares them as `SPECI1:` / `STUKI1:` lines. `Space u` opens a menu that converts between
+the forms; the input is the clipboard (or the command's argument, or for the C# conversions the
+program of the Code tool) and the result is copied. Wrapped lines are fine.
+
+| key | command | conversion |
+|---|---|---|
+| `a` | `:url [text]` | guess: a line becomes a link, a link becomes a line |
+| `l` | `:tourl [text]` | line, specification text or `.st` JSON → web editor link |
+| `u` | `:toline [link]` | web editor link → `SPECI1:` / `STUKI1:` line |
+| `d` | `:decode [link] [file]` | web editor link → specification text or structogram JSON (also into a file) |
+| `c` | `:csurl` | C# program → Stuki link, one structogram per method |
+| `C` | `:csline` | C# program → `STUKI1:` line |
+| `w` | `:weblink` | copy the web editor link of this tool's project (Code tool: the program as structograms) |
+| `o` | `:openweb` | open it in the browser |
+
+Without a clipboard tool the menu waits for the terminal's paste. **C# → structograms**
+(`Space s` or `:fromcode` in the Code tool) turns every method of the program into a structogram
+and opens the Structogram tool; the result replaces its content. It is a scanner for textbook
+algorithms (loops, `if`, `switch`, declarations, `Console` input and output), not a C# compiler:
+what it does not recognize stays as a statement line.
 
 ## ASCII mode
 

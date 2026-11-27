@@ -9,6 +9,7 @@
 //! read into a project.
 
 pub mod format;
+pub mod from_csharp;
 pub mod from_spec;
 pub mod merge;
 pub mod model;
