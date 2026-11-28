@@ -762,6 +762,30 @@ fn convert_dialog_converts_links() {
     }
 }
 
+/// "Friendly" adds the version for a person at the keyboard to the console program, and is kept
+/// with the project.
+#[test]
+fn friendly_toggle_changes_the_program_and_is_saved() {
+    let mut h = code_harness();
+    h.state_mut().code.source = crate::app::code::Source::Console;
+    h.state_mut().code_convert();
+    assert!(!h.state().code.text.contains("IsInputRedirected"));
+    h.state_mut().code.layout.friendly = true;
+    h.state_mut().code_convert();
+    let t = h.state().code.text.clone();
+    assert!(
+        t.contains("if (Console.IsInputRedirected)") && t.contains("TryParse"),
+        "{t}"
+    );
+    let cfg = h.state().code.cfg();
+    assert!(cfg.to_line().unwrap().contains("friendly"));
+    assert!(
+        crate::file::CodeCfg::from_line(cfg.to_line().as_deref())
+            .layout
+            .friendly
+    );
+}
+
 /// The side panel of the Code tab (console mode): the line breaks of the input are a choice per
 /// variable, and the program and its input follow.
 #[test]

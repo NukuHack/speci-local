@@ -101,6 +101,11 @@ pub struct VarLayout {
 #[serde(default)]
 pub struct IoLayout {
     vars: BTreeMap<String, VarLayout>,
+    /// The console program also has a friendly version, used when the input and output are not
+    /// redirected: it asks for every value (with the bounds of the specification, asking again
+    /// when a value is wrong) and says what it prints. The program written for redirected input
+    /// and output (what the Code tab runs) is the same as without it.
+    pub friendly: bool,
 }
 
 impl IoLayout {
@@ -124,6 +129,13 @@ impl IoLayout {
 
     pub fn set_join(&mut self, name: &str, join: bool) {
         self.edit(name, |v| v.join = join);
+    }
+
+    /// The layout with the friendly version of the console program on or off.
+    #[must_use]
+    pub fn with_friendly(mut self, on: bool) -> Self {
+        self.friendly = on;
+        self
     }
 
     /// Nothing was changed from the default layout.

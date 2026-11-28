@@ -1118,6 +1118,11 @@ impl App {
                 "off" | "0" => self.code_set_functions(false),
                 _ => self.code_set_functions(!self.code.functions),
             },
+            "friendly" | "nice" => match arg {
+                "on" | "1" => self.code_set_friendly(true),
+                "off" | "0" => self.code_set_friendly(false),
+                _ => self.code_set_friendly(!self.code.layout.friendly),
+            },
             "reduction" | "red" => self.spec_reduction(),
             "stop" => {
                 self.code.stop();
@@ -1321,7 +1326,7 @@ impl App {
                     self.say(match self.tool {
                         Tool::Spec => "SPC: r run  f →structogram  t/d test  s scaffold  a auto  v view  u links  w save  o open  n new  y copy  p paste  q quit  ? help",
                         Tool::Stuki => "SPC: f build from spec  c copy picture  u links  w save  o open  n new  y copy  p paste  1/2/3 tool  q quit  ? help",
-                        Tool::Code => "SPC: f from spec+stuki  m mode  r run  x stop  i fill input  s →structogram  u links  b/B carbon  y copy  w save  1/2/3 tool  q quit  ? help",
+                        Tool::Code => "SPC: f from spec+stuki  m mode  r run  x stop  i fill input  s →structogram  N friendly  u links  b/B carbon  y copy  w save  1/2/3 tool  q quit  ? help",
                     });
                     return;
                 }
@@ -1446,6 +1451,7 @@ impl App {
             'm' if self.tool == Tool::Code => self.command("mode"),
             'i' if self.tool == Tool::Code => self.code_fill(),
             'F' if self.tool == Tool::Code => self.code_set_functions(!self.code.functions),
+            'N' if self.tool == Tool::Code => self.code_set_friendly(!self.code.layout.friendly),
             'g' if self.tool == Tool::Spec => self.spec_reduction(),
             'b' if self.tool == Tool::Code => self.code_carbon(false),
             'B' if self.tool == Tool::Code => self.code_carbon(true),

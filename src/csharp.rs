@@ -15,6 +15,8 @@ use crate::stuki::model::{Diagram, Kind, Node, Program};
 use crate::stuki::run::header;
 use std::collections::{HashMap, HashSet};
 
+mod nice;
+
 /// Where the program gets its input.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum Inputs {
@@ -355,6 +357,8 @@ struct Gen<'a> {
     layout: IoLayout,
     /// Input, Process and Output are methods of their own (`Main` only calls them).
     functions: bool,
+    /// The friendly output is being written: it says what it prints.
+    nice_out: bool,
 }
 
 const KEYWORDS: &[&str] = &[
@@ -543,6 +547,7 @@ impl<'a> Gen<'a> {
             english: spec.post_kw != "Uf:",
             layout: IoLayout::default(),
             functions: false,
+            nice_out: false,
         };
         for d in &spec.decls {
             let ty = g.ty_of(&d.ty);
@@ -1673,6 +1678,14 @@ impl<'a> Gen<'a> {
             n
         };
         let (f_in, f_proc, f_out) = (part("Input"), part("Process"), part("Output"));
+        // the friendly version of the console program: used when the input / output is not
+        // redirected (the redirected one is what the Code tab runs)
+        let friendly = inputs == Inputs::Console && self.layout.friendly;
+        let (f_in_nice, f_out_nice) = if friendly {
+            (part("Input_nice"), part("Output_nice"))
+        } else {
+            (String::new(), String::new())
+        };
 
         self.depth = 2;
         self.line("/* Declaration */");
@@ -1704,7 +1717,23 @@ impl<'a> Gen<'a> {
             .collect();
         if !ins.is_empty() {
             if split {
-                self.line(&format!("{f_in}({});", in_args.join(", ")));
+                let call = |name: &str| format!("{name}({});", in_args.join(", "));
+                if friendly {
+                    self.choose("Console.IsInputRedirected", &call(&f_in), &call(&f_in_nice));
+                } else {
+                    self.line(&call(&f_in));
+                }
+            } else if friendly {
+                self.line("if (Console.IsInputRedirected)");
+                self.open();
+                let taken = self.taken.clone();
+                self.input_section(&ins, &env);
+                self.taken = taken;
+                self.close();
+                self.line("else");
+                self.open();
+                self.input_section_nice(&ins);
+                self.close();
             } else {
                 self.input_section(&ins, &env);
             }
@@ -1730,7 +1759,25 @@ impl<'a> Gen<'a> {
             if split {
                 let args: Vec<String> = outs.iter().map(|d| id(&d.name)).collect();
                 let args = if fields { vec![] } else { args };
-                self.line(&format!("{f_out}({});", args.join(", ")));
+                let call = |name: &str| format!("{name}({});", args.join(", "));
+                if friendly {
+                    self.choose(
+                        "Console.IsOutputRedirected",
+                        &call(&f_out),
+                        &call(&f_out_nice),
+                    );
+                } else {
+                    self.line(&call(&f_out));
+                }
+            } else if friendly {
+                self.line("if (Console.IsOutputRedirected)");
+                self.open();
+                self.output_section(&outs, &env);
+                self.close();
+                self.line("else");
+                self.open();
+                self.output_section_nice(&outs);
+                self.close();
             } else {
                 self.output_section(&outs, &env);
             }
@@ -1754,8 +1801,17 @@ impl<'a> Gen<'a> {
                 self.line("");
                 self.line(&format!("static void {f_in}({})", params.join(", ")));
                 self.open();
+                let taken = self.taken.clone();
                 self.input_section(&ins, &env);
+                self.taken = taken;
                 self.close();
+                if friendly {
+                    self.line("");
+                    self.line(&format!("static void {f_in_nice}({})", params.join(", ")));
+                    self.open();
+                    self.input_section_nice(&ins);
+                    self.close();
+                }
             }
             let params: Vec<String> = ins
                 .iter()
@@ -1782,6 +1838,13 @@ impl<'a> Gen<'a> {
                 self.open();
                 self.output_section(&outs, &env);
                 self.close();
+                if friendly {
+                    self.line("");
+                    self.line(&format!("static void {f_out_nice}({})", params.join(", ")));
+                    self.open();
+                    self.output_section_nice(&outs);
+                    self.close();
+                }
             }
         }
         let parts_text = std::mem::take(&mut self.out);
@@ -2520,10 +2583,13 @@ impl<'a> Gen<'a> {
         match &ty {
             Ty::Arr { dims, elem, .. } if *dims <= 2 => {
                 if label {
-                    self.line(&format!(
-                        "Console.Write({});",
-                        quote(&format!("{} = ", d.name))
-                    ));
+                    let t = self.label_text(&d.name, true);
+                    if self.nice_out && level != Level::Single {
+                        // the values follow in lines of their own
+                        self.line(&format!("Console.WriteLine({});", quote(t.trim_end())));
+                    } else {
+                        self.line(&format!("Console.Write({});", quote(&t)));
+                    }
                 }
                 let (dd, _) = dims_of(spec, &d.ty);
                 let mut bounds = vec![];
@@ -2600,10 +2666,8 @@ impl<'a> Gen<'a> {
     /// A value that is one token (or a record's tokens) in one line.
     fn print_one(&mut self, expr: &str, var: &str, closing: bool) {
         if self.labels {
-            self.line(&format!(
-                "Console.WriteLine({} + {expr});",
-                quote(&format!("{var} = "))
-            ));
+            let t = self.label_text(var, false);
+            self.line(&format!("Console.WriteLine({} + {expr});", quote(&t)));
         } else if closing {
             self.line(&format!("Console.WriteLine({expr});"));
         } else {

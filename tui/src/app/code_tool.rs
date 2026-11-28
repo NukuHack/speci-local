@@ -185,6 +185,24 @@ impl App {
         }
     }
 
+    /// The friendly version of the console program on or off (see `IoLayout::friendly`).
+    pub fn code_set_friendly(&mut self, on: bool) {
+        self.code.layout.friendly = on;
+        let word = if on { "on" } else { "off" };
+        if self.code.source != Source::Console {
+            self.code.status = format!(
+                "Friendly {word}: it only applies when the program reads the console (Space m)"
+            );
+        } else if self.code.unedited() {
+            self.code_convert_now();
+        } else if !self.code.is_empty() {
+            self.code.status =
+                format!("Friendly {word}: your program was kept, Space f writes it again");
+        } else {
+            self.code.status = format!("Friendly {word}");
+        }
+    }
+
     /// The input of the selected test case, as the generated program reads it.
     pub(super) fn code_fill(&mut self) {
         let test = self.selected_test();

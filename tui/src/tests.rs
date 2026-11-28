@@ -1032,3 +1032,35 @@ fn the_conversion_menu_is_documented_on_screen() {
         s.chars().find(|c| !c.is_ascii()).unwrap()
     );
 }
+
+#[test]
+fn the_friendly_console_program_is_a_toggle() {
+    let mut a = code_app();
+    keys(&mut a, ":mode console<CR>");
+    keys(&mut a, ":convert<CR>");
+    assert!(!a.code.text().contains("IsInputRedirected"));
+    // Space N writes the program again with the friendly version in it
+    keys(&mut a, "<Space>N");
+    assert!(a.code.layout.friendly, "{}", a.code.status);
+    let t = a.code.text();
+    assert!(
+        t.contains("if (Console.IsInputRedirected)") && t.contains("TryParse"),
+        "{t}"
+    );
+    assert!(render(&mut a, 150, 40).contains("friendly"));
+    keys(&mut a, ":friendly off<CR>");
+    assert!(!a.code.layout.friendly && !a.code.text().contains("IsInputRedirected"));
+    // it only applies to the console: the toggle says so and keeps the program
+    keys(&mut a, ":mode test<CR>");
+    keys(&mut a, ":friendly on<CR>");
+    assert!(a.code.status.contains("console"), "{}", a.code.status);
+    // the help lists the key and the command
+    let all: String = ui::help_lines(&a.theme, a.tool, a.focus)
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    for want in ["Space N", ":friendly", "no break / continue / return"] {
+        assert!(all.contains(want), "help lacks {want}");
+    }
+}

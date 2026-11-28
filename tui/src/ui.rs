@@ -772,10 +772,15 @@ fn draw_code_tool(f: &mut Frame<'_>, app: &mut App, area: Rect) {
             format!("{l}:{c}")
         } else {
             format!(
-                "{}{} · test {}/{} · {l}:{c}",
+                "{}{}{} · test {}/{} · {l}:{c}",
                 app.code.source.label(),
                 if app.code.functions {
                     " · functions"
+                } else {
+                    ""
+                },
+                if app.code.layout.friendly {
+                    " · friendly"
                 } else {
                     ""
                 },
@@ -1192,10 +1197,15 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
             _ => String::new(),
         },
         Tool::Code => format!(
-            "reads {}{}  ",
+            "reads {}{}{}  ",
             app.code.source.label(),
             if app.code.functions {
                 " · functions"
+            } else {
+                ""
+            },
+            if app.code.layout.friendly {
+                " · friendly"
             } else {
                 ""
             }

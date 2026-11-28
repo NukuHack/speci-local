@@ -69,6 +69,12 @@ Space f  ·  write the program from the specification and the structograms (asks
             you edited it; if the Structogram tool is empty the From spec ones are used)
 Space m  ·  the program uses the test case's values  /  reads them from the console
 Space F  ·  Input, Process and Output as functions of their own (:functions [on|off])
+Space N  ·  the friendly console program (:friendly [on|off]): besides the program that reads the
+            input unchecked and prints it plainly (what Space r runs), it has a version for a
+            person at the keyboard - used when the input / output is not redirected. It says what
+            it asks for, checks the bounds the specification gives (the types and Ef:), asks again
+            when a value is wrong (no break / continue / return, only retry loops) and says what it
+            prints. What it could not check is listed in :notes. Console mode only.
 Space r (F5)  ·  build and run it with dotnet from the PATH;  Space x stops it
 Space s  ·  C# -> structograms: every method of the program becomes a structogram and the
             Structogram tool opens (replaces its content; :fromcode or :tostuki too)
@@ -79,13 +85,13 @@ Space y or c  ·  copy the program;  Space b / B  ·  copy / open a carbon.now.s
 Tab / Shift-Tab  ·  program, console input (console mode only), output
 Output pane: j k Ctrl-d Ctrl-u gg G scroll,  Enter jumps to the first compile error
 Console mode while the program runs: Enter on a line of the input box sends it (:send text too)
-:convert  :mode test|console  :functions  :run  :stop  :fill  :carbon [open]  :send text  :notes
+:convert  :mode test|console  :functions  :friendly  :run  :stop  :fill  :carbon [open]  :send text  :notes
 :fromcode  :csurl  :csline  :weblink  :openweb
 :notes  ·  what the conversion could not translate (the // TODO lines) or guessed
 Under the input box the test case's expected output is shown, and after a run
 the output is compared with it (matches / differs).
 It is saved in the .sp file with the specification and the structograms, and so are the
-settings (test values or console, functions, line layout).
+settings (test values or console, functions, friendly, line layout).
 
 # Editing text (vim keys) @editing
 i a I A o O  ·  insert

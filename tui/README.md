@@ -44,6 +44,7 @@ The mouse is never needed (and never captured, so you can still select text with
 | `Space w` (`Ctrl-s`), `W` | save, save as |
 | `Space o` `n` `q` | open, new, quit |
 | `Space y` / `p` | copy / paste the whole project as one line |
+| `Space N` (Code tool, `:friendly [on\|off]`) | **friendly console program**: the program also has a version for a person at the keyboard (see below) |
 | `Space u` | **links and conversions menu** (see below; `:url :tourl :toline :decode :csurl :csline :weblink :openweb`) |
 | `Space s` (Code tool, `:fromcode`) | **convert the C# program into structograms** |
 | `Space t` `d` `s` | new test case, delete test case, insert variable names |
@@ -83,6 +84,20 @@ step list. `v` cycles the views.
 delete/copy/paste, `J`/`K` move an element, `+c`/`+d` add a case / default, `th` `tv` `tr` show or
 hide the name, variables and return value, `u`/`Ctrl-r` undo and redo. The test cases run in the
 background; the failing element is marked red and the side panel says why.
+
+## The friendly console program
+
+With the Code tool in console mode, `Space N` (`:friendly`) makes the program have two versions of its
+input and output, chosen when it runs (`Console.IsInputRedirected` / `IsOutputRedirected`): the one
+that reads its values unchecked and prints them plainly, which is what `Space r` runs, and a
+friendly one for a person at the keyboard. The friendly input asks for every line (`input 'n' and
+'k': `), says when the number of values is wrong, and asks again until the values are right. The
+bounds come from the specification: the types (`N` is not negative, `[a..b]`) and the precondition
+(`Ef:`). A condition is checked as soon as the last input it talks about has been typed, and a
+`∀i∈[..]:(…)` on an array is checked for every element. A condition that is more complicated than
+that is not checked, and `:notes` says so. The friendly output says what each value is. The
+program uses only retry loops: there is no `break`, `continue` or `return` in it. The prompts
+are in the language of the specification (`Uf:` is Hungarian).
 
 ## Links and conversions
 

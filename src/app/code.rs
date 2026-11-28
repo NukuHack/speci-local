@@ -201,6 +201,17 @@ impl App {
                     "Input, Process and Output as functions of their own\n(Main declares the variables and calls them)",
                 )
                 .changed();
+            let console = self.code.source == Source::Console;
+            let friendly = ui
+                .add_enabled_ui(console, |ui| {
+                    ui.toggle_value(&mut self.code.layout.friendly, "Friendly")
+                        .on_hover_text(
+                            "Console mode only: the program also has a version for a person at the keyboard\n(when the input and output are not redirected). It says what it asks for, checks the\nbounds of the specification (types and Ef:), asks again when a value is wrong, and\nsays what it prints. The redirected version is what the Run button tests.",
+                        )
+                        .changed()
+                })
+                .inner;
+            functions_changed |= friendly;
             ui.separator();
             if !self.doc.tests.is_empty() {
                 egui::ComboBox::from_id_salt("code-test")
