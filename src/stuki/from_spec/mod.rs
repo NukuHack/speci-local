@@ -254,11 +254,7 @@ impl Gen<'_> {
     fn finish_locals(&mut self, d: &mut Diagram) {
         let locals = std::mem::take(&mut self.locals);
         d.show_variables = !locals.is_empty();
-        let text = locals
-            .iter()
-            .map(|(n, t)| format!("{n}:{t}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let text = crate::stuki::model::group_variables(&locals, ":").join(", ");
         d.variables = Rich::plain(&text);
     }
 

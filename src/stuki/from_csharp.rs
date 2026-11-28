@@ -80,7 +80,7 @@ pub fn from_csharp(source: &str) -> Res<Converted> {
         let body = p.statements(m.body.0, m.body.1, true)?;
         let mut d = Diagram::new();
         d.name = Rich::plain(&m.name);
-        d.variables = Rich::plain(&p.vars.join("\n"));
+        d.variables = Rich::plain(&super::model::group_variables(&p.vars, " : ").join("\n"));
         d.show_variables = !p.vars.is_empty();
         d.show_header = true;
         d.show_return = p.ret.is_some();
@@ -585,8 +585,8 @@ fn one_line(t: &str) -> String {
 
 struct Parser<'a> {
     s: &'a [char],
-    /// `name : Type`, in declared order.
-    vars: Vec<String>,
+    /// `(name, type)`, in declared order.
+    vars: Vec<(String, String)>,
     ret: Option<String>,
 }
 
@@ -597,7 +597,7 @@ const NOT_TYPES: [&str; 12] = [
 
 impl Parser<'_> {
     fn add_var(&mut self, name: &str, typ: &str) {
-        let e = format!("{name} : {typ}");
+        let e = (name.to_string(), typ.to_string());
         if !self.vars.contains(&e) {
             self.vars.push(e);
         }
@@ -1233,10 +1233,7 @@ mod tests {
         };
         let lines: Vec<_> = body.iter().map(st).collect();
         assert_eq!(lines, ["tmp = a + b", "a = b", "b = tmp", "i++"]);
-        assert_eq!(
-            fib.variables.text,
-            "n : int\na : int\nb : int\ni : int\ntmp : int"
-        );
+        assert_eq!(fib.variables.text, "n, a, b, i, tmp : int");
     }
 
     #[test]

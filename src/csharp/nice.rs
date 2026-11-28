@@ -19,6 +19,11 @@ use super::*;
 pub(super) struct Cond {
     code: String,
     text: String,
+    /// The smallest whole number the condition allows, when it says so (`1<=n`, `n∈[2..5]`).
+    lower: Option<i64>,
+    /// The condition only says what the type `N` says (not negative): any other lower bound
+    /// that is not negative makes it unnecessary.
+    nat: bool,
 }
 
 /// What the specification demands of the inputs.
@@ -151,6 +156,45 @@ fn rename(code: &str, from: &[String], to: &[String]) -> String {
         }
     }
     out
+}
+
+/// The smallest whole number `c` allows for what `is_target` recognizes, when it says so with a
+/// literal: `1<=n`, `n>=2`, `0<=n<=5`, `n=3`, `n∈[1..5]`.
+fn lower_bound(c: &Expr, is_target: &dyn Fn(&Expr) -> bool) -> Option<i64> {
+    let lit = |e: &Expr| match &*e.kind {
+        ExprKind::Int(i) => Some(*i),
+        _ => None,
+    };
+    match &*c.kind {
+        ExprKind::Cmp(xs, ops) => ops
+            .iter()
+            .enumerate()
+            .filter_map(|(k, op)| {
+                let (a, b) = (&xs[k], &xs[k + 1]);
+                match *op {
+                    "<=" | "<" if is_target(b) => lit(a),
+                    ">=" | ">" if is_target(a) => lit(b),
+                    "=" if is_target(a) => lit(b),
+                    "=" if is_target(b) => lit(a),
+                    _ => None,
+                }
+            })
+            .max(),
+        ExprKind::In(x, lo, _) if is_target(x) => lit(lo),
+        _ => None,
+    }
+}
+
+/// The conditions of one value without the ones another makes unnecessary.
+fn prune(conds: Vec<Cond>) -> Vec<Cond> {
+    if conds
+        .iter()
+        .any(|c| !c.nat && c.lower.is_some_and(|l| l >= 0))
+    {
+        conds.into_iter().filter(|c| !c.nat).collect()
+    } else {
+        conds
+    }
 }
 
 /// A term of a product: in parentheses when it has operators.
@@ -297,6 +341,8 @@ impl Gen<'_> {
                         out.scalar.entry(v.clone()).or_default().push(Cond {
                             code: format!("{} >= 0", id(&v)),
                             text: format!("{v} >= 0 (a size)"),
+                            lower: Some(0),
+                            nat: false,
                         });
                     }
                 }
@@ -337,10 +383,13 @@ impl Gen<'_> {
             return false;
         };
         let code = self.ex(c, 0);
-        out.scalar
-            .entry(target)
-            .or_default()
-            .push(Cond { code, text });
+        let lower = lower_bound(c, &|e| matches!(&*e.kind, ExprKind::Var(n) if *n == target));
+        out.scalar.entry(target).or_default().push(Cond {
+            code,
+            text,
+            lower,
+            nat: false,
+        });
         true
     }
 
@@ -426,6 +475,15 @@ impl Gen<'_> {
                 }
             }
             let body = self.ex(part, 0);
+            // a bound that holds for some of the elements is no bound for all of them
+            let lower = if guard.is_empty() {
+                lower_bound(
+                    part,
+                    &|e| matches!(&*e.kind, ExprKind::Index(x, _) if matches!(&*x.kind, ExprKind::Var(n) if n == a)),
+                )
+            } else {
+                None
+            };
             let code = if guard.is_empty() {
                 body
             } else {
@@ -437,6 +495,8 @@ impl Gen<'_> {
                 Cond {
                     code,
                     text: spec.text(c).to_string(),
+                    lower,
+                    nat: false,
                 },
             ));
         }
@@ -458,12 +518,20 @@ impl Gen<'_> {
             Some(Type::Nat) => vec![Cond {
                 code: format!("{target} >= 0"),
                 text: format!("{label} >= 0"),
+                lower: Some(0),
+                nat: true,
             }],
             Some(Type::Interval(lo, hi)) => {
                 let (l, h) = (self.ex(lo, 5), self.ex(hi, 5));
+                let lower = match &*lo.kind {
+                    ExprKind::Int(i) => Some(*i),
+                    _ => None,
+                };
                 vec![Cond {
                     code: format!("{target} >= {l} && {target} <= {h}"),
                     text: format!("{} <= {label} <= {}", spec.text(lo), spec.text(hi)),
+                    lower,
+                    nat: false,
                 }]
             }
             _ => vec![],
@@ -568,7 +636,7 @@ impl Gen<'_> {
                     segs.push(Seg::Tok {
                         target: name,
                         ty: t,
-                        conds: cs,
+                        conds: prune(cs),
                     });
                     labels.push(d.name.clone());
                 }
@@ -670,7 +738,7 @@ impl Gen<'_> {
             .into_iter()
             .map(|c| Cond {
                 code: rename(&c.code, &names, &vars),
-                text: c.text,
+                ..c
             })
             .collect();
         let target = format!("{name}[{}]", vars.join(", "));
@@ -714,6 +782,7 @@ impl Gen<'_> {
             e => {
                 let mut cs = self.type_conds(elem_type, &target, &any);
                 cs.extend(from_spec);
+                let cs = prune(cs);
                 toks.push((
                     Seg::Tok {
                         target: target.clone(),
@@ -934,10 +1003,11 @@ impl Gen<'_> {
         for s in segs {
             match s {
                 Seg::Tok { conds, .. } if !conds.is_empty() => {
+                    // `&&` binds tighter than the `||` of an implication
                     let parts: Vec<String> = conds
                         .iter()
                         .map(|c| {
-                            if conds.len() > 1 {
+                            if conds.len() > 1 && (c.code.contains("||") || c.code.contains('?')) {
                                 format!("({})", c.code)
                             } else {
                                 c.code.clone()
@@ -1046,11 +1116,22 @@ mod tests {
         }
         // the bounds come from the specification
         assert!(
-            c.code.contains("(10 <= n)") && c.code.contains("(n <= 100)"),
+            c.code.contains("ok = ok && 10 <= n && n <= 100;"),
             "{}",
             c.code
         );
-        assert!(c.code.contains("10 <= k && k <= 100"), "{}", c.code);
+        assert!(
+            c.code.contains("ok = ok && 10 <= k && k <= 100;"),
+            "{}",
+            c.code
+        );
+        // `N` already says not negative: a bound of 10 or more makes that unnecessary
+        assert!(
+            !c.code.contains("n >= 0") && !c.code.contains("k >= 0"),
+            "{}",
+            c.code
+        );
+        assert!(!c.code.contains("szel[j] >= 0 &&"), "{}", c.code);
         assert!(c.notes.is_empty(), "{:?}", c.notes);
         // an English specification talks English
         let en = code(
@@ -1067,6 +1148,29 @@ mod tests {
             en.contains("value(s) are needed") && en.contains("invalid input, try again"),
             "{en}"
         );
+    }
+
+    /// What `N` says is not said again when another bound already makes it true.
+    #[test]
+    fn implied_bounds_are_left_out() {
+        let spec = parse(WIND).unwrap();
+        let c = code(WIND, false, &friendly(false, Level::Auto, &spec)).code;
+        for want in [
+            "ok = ok && 1 <= n && n <= 1000;",
+            "ok = ok && 1 <= k && k <= 10;",
+            "ok = ok && 0 <= szel[j] && szel[j] <= 200;",
+            "(required: 1≤n≤1000)",
+            "(required: 1≤k≤10)",
+            "(required: ∀i∈[1..n]:(0≤szel[i]≤200))",
+        ] {
+            assert!(c.contains(want), "{want}\n{c}");
+        }
+        assert!(!c.contains(">= 0"), "{c}");
+        // a bound that does not reach zero does not replace it
+        let text = WIND.replace("1≤k≤10", "k≤10");
+        let spec = parse(&text).unwrap();
+        let c = code(&text, false, &friendly(false, Level::Auto, &spec)).code;
+        assert!(c.contains("ok = ok && k >= 0 && k <= 10;"), "{c}");
     }
 
     /// The new lines never leave a loop or a method early.

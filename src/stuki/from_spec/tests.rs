@@ -86,7 +86,7 @@ fn max_and_search() {
     );
     assert_eq!(
         out,
-        "== T\nvars i:Egész, j:Egész\nBe: n, x\n\
+        "== T\nvars i, j:Egész\nBe: n, x\n\
          mi:=1\nme:=x[1]\n[while i=2..n]\n  [if x[i]>me]\n    mi:=i\n    me:=x[i]\n\
          j:=1\n[while j≤n és nem (x[j]<0)]\n  j:=j+1\nvan:=j≤n\n[if van]\n  ind:=j\nKi: mi, me, van, ind\n"
     );
@@ -98,7 +98,7 @@ fn empty_slot_gets_a_local_and_order_follows_dependencies() {
         "Be:\nn∈N,\nx∈Z[1..n]\nKi:\nme∈Z,\nk∈Z\nEf:\nn>0\nUf:\nk=me*2 és (,me)=MAX(i=1..n, x[i])\n",
     );
     assert!(
-        out.starts_with("== T\nvars maxind:Egész, i:Egész\nBe: n, x\nmaxind:=1\nme:=x[1]\n"),
+        out.starts_with("== T\nvars maxind, i:Egész\nBe: n, x\nmaxind:=1\nme:=x[1]\n"),
         "{out}"
     );
     assert!(out.ends_with("k:=me*2\nKi: me, k\n"), "{out}");
@@ -111,7 +111,7 @@ fn nested_pattern_and_elementwise_loop() {
     );
     assert_eq!(
         out,
-        "== T\nvars i:Egész, db:Egész, j:Egész\nBe: n, m, t\n[while i=1..n]\n  db:=0\n  [while j=1..m]\n    [if t[i,j]>0]\n      db:=db+1\n  y[i]:=db\nKi: y\n"
+        "== T\nvars i, db, j:Egész\nBe: n, m, t\n[while i=1..n]\n  db:=0\n  [while j=1..m]\n    [if t[i,j]>0]\n      db:=db+1\n  y[i]:=db\nKi: y\n"
     );
 }
 
@@ -175,7 +175,7 @@ fn names_are_unique_per_structogram() {
         "In:\nn∈N,\nm∈N,\nt∈N[1..n,1..m]\nOut:\nmx∈N\nFn:\nmc:N->N x N, mc(i)=MAX(j=1..m, t[i,j])\nPre:\n-\nPost:\n(mx,)=MAX(i=1..n, mc(i).maxval)\n",
     );
     assert!(
-        out.contains("== mc(i:Integer):Integer x Integer\nvars maxind:Integer, maxval:Integer"),
+        out.contains("== mc(i:Integer):Integer x Integer\nvars maxind, maxval, j:Integer"),
         "{out}"
     );
     assert!(out.contains("maxval:=mc(1).maxval\n"), "{out}");
@@ -220,7 +220,7 @@ fn branches_that_exclude_each_other_are_one_decision() {
 fn a_nested_loop_with_the_same_variable_gets_its_own() {
     assert_eq!(
         table("s∈Z\nEf:\n-\nUf:\ns=SZUMMA(i=1..n, SZUMMA(i=1..m, t[1,i]))"),
-        "== T\nvars i:Egész, s2:Egész, i2:Egész\nBe: n, m, x, t\ns:=0\n[while i=1..n]\n  s2:=0\n  \
+        "== T\nvars i, s2, i2:Egész\nBe: n, m, x, t\ns:=0\n[while i=1..n]\n  s2:=0\n  \
          [while i2=1..m]\n    s2:=s2+t[1,i2]\n  s:=s+s2\nKi: s\n"
     );
 }
@@ -229,7 +229,7 @@ fn a_nested_loop_with_the_same_variable_gets_its_own() {
 fn patterns_inside_a_condition_become_steps() {
     assert_eq!(
         table("van∈L\nEf:\n-\nUf:\nvan=∃i∈[1..n]:(SZUMMA(j=1..m, t[i,j])>0)"),
-        "== T\nvars i:Egész, s:Egész, j:Egész\nBe: n, m, x, t\nvan:=hamis\ni:=1\n\
+        "== T\nvars i, s, j:Egész\nBe: n, m, x, t\nvan:=hamis\ni:=1\n\
          [while i≤n és nem van]\n  s:=0\n  [while j=1..m]\n    s:=s+t[i,j]\n  van:=s>0\n  i:=i+1\nKi: van\n"
     );
     let search = table("van∈L,\nk∈N\nEf:\n-\nUf:\n(van,k)=KERES(i=1..n, SZUMMA(j=1..m, t[i,j])>3)");
@@ -271,7 +271,7 @@ fn patterns_inside_a_condition_become_steps() {
 fn the_first_element_of_a_maximum_gets_the_same_steps() {
     assert_eq!(
         table("mi∈N,\nme∈Z\nEf:\nn>0\nUf:\n(mi,me)=MAX(i=1..n, SZUMMA(j=1..m, t[i,j]))"),
-        "== T\nvars i:Egész, s:Egész, j:Egész\nBe: n, m, x, t\n[while i=1..n]\n  s:=0\n  [while j=1..m]\n    \
+        "== T\nvars i, s, j:Egész\nBe: n, m, x, t\n[while i=1..n]\n  s:=0\n  [while j=1..m]\n    \
          s:=s+t[i,j]\n  [if i=1 vagy s>me]\n    mi:=i\n    me:=s\nKi: mi, me\n"
     );
 }
@@ -280,7 +280,7 @@ fn the_first_element_of_a_maximum_gets_the_same_steps() {
 fn a_part_of_a_pattern_becomes_steps() {
     assert_eq!(
         table("s∈Z\nEf:\nn>0\nUf:\ns=MAX(i=1..n, x[i]).maxval+1"),
-        "== T\nvars maxind:Egész, maxért:Egész, i:Egész\nBe: n, m, x, t\nmaxind:=1\nmaxért:=x[1]\n\
+        "== T\nvars maxind, maxért, i:Egész\nBe: n, m, x, t\nmaxind:=1\nmaxért:=x[1]\n\
          [while i=2..n]\n  [if x[i]>maxért]\n    maxind:=i\n    maxért:=x[i]\ns:=maxért+1\nKi: s\n"
     );
     // issue #5: the maximum inside the condition of a filter
@@ -401,7 +401,7 @@ fn a_pattern_written_twice_is_computed_once() {
     );
     assert!(
         out.ends_with(
-            "vars van:Logikai, ind:Egész, j:Egész\nj:=1\n[while j≤n és nem (t[j]=0)]\n  j:=j+1\nvan:=j≤n\n[if van]\n  ind:=j\nreturn {ind, ha van; n egyébként}\n"
+            "vars van:Logikai, ind, j:Egész\nj:=1\n[while j≤n és nem (t[j]=0)]\n  j:=j+1\nvan:=j≤n\n[if van]\n  ind:=j\nreturn {ind, ha van; n egyébként}\n"
         ),
         "{out}"
     );

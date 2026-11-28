@@ -11,6 +11,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A process-wide unique id for nodes, switch cases and diagrams (never saved: files get their own).
+/// The text of a variables box: the variables of one type share a line (`n, k:Int`), in the
+/// order the types first appear. `sep` is what stands between the names and the type.
+pub fn group_variables(vars: &[(String, String)], sep: &str) -> Vec<String> {
+    let mut groups: Vec<(&str, Vec<&str>)> = vec![];
+    for (name, ty) in vars {
+        match groups.iter_mut().find(|g| g.0 == ty) {
+            Some(g) => g.1.push(name),
+            None => groups.push((ty, vec![name])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(ty, names)| format!("{}{sep}{ty}", names.join(", ")))
+        .collect()
+}
+
 pub fn fresh_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
